@@ -20,10 +20,11 @@ const (
 	totalHeaderSize = lsnSize + lengthSize + checksumSize + timestampSize
 )
 
-func MarshalWalEntry(walEntry *WAL_Entry) []byte {
+func MarshalWalEntry(walEntry *WAL_Entry) ([]byte, int) {
 
 	// is it possible to not use this make and use a sync.Pool with a bigger size
-	marshalled := make([]byte, totalHeaderSize+len(walEntry.data))
+	walDataLen := len(walEntry.data)
+	marshalled := make([]byte, totalHeaderSize+walDataLen)
 
 	binary.LittleEndian.PutUint64(marshalled[:8], walEntry.lsn)
 	binary.LittleEndian.PutUint64(marshalled[8:16], uint64(walEntry.timestamp))
@@ -32,7 +33,7 @@ func MarshalWalEntry(walEntry *WAL_Entry) []byte {
 
 	copy(marshalled[totalHeaderSize:], walEntry.data)
 
-	return marshalled
+	return marshalled, totalHeaderSize + walDataLen
 }
 
 func UnmarshalWalEntry(byteDataWalEntry []byte) *WAL_Entry {

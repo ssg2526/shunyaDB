@@ -2,9 +2,12 @@ package wal
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ssg2526/shunya/config"
@@ -26,6 +29,9 @@ type WAL struct {
 	bufSyncTicker     *time.Ticker
 	maxSegmentSize    int
 	lastLSN           uint64
+	mu                sync.Mutex
+	ctx               context.Context
+	cancel            context.CancelFunc
 }
 
 type WAL_Entry struct {
@@ -41,11 +47,12 @@ func InitWal() *WAL {
 	currSegmentFile, currSegmentIndex, lastLSN := getCurrSegment(config.ShunyaConfigs.WALDir)
 	bufWriter := bufio.NewWriterSize(currSegmentFile, config.ShunyaConfigs.WALWriteBufferSize)
 	currSegmentOffset, err := currSegmentFile.Seek(0, io.SeekEnd)
+	ctx, cancel := context.WithCancel(context.Background())
 	if err != nil {
 
 	}
 
-	return &WAL{
+	wal := &WAL{
 		logDir:            config.ShunyaConfigs.WALDir,
 		shouldFsync:       config.ShunyaConfigs.WALShouldFsync,
 		bufSyncTicker:     time.NewTicker(time.Duration(config.ShunyaConfigs.WALBufSyncIntervalMillis)),
@@ -56,26 +63,33 @@ func InitWal() *WAL {
 		bufWriter:         bufWriter,
 		writeBufSize:      config.ShunyaConfigs.WALWriteBufferSize,
 		lastLSN:           lastLSN,
+		ctx:               ctx,
+		cancel:            cancel,
 	}
+
+	go wal.syncWalBufferToDisk()
+
+	return wal
 }
 
 func (wal *WAL) AppendToWal(commandData []byte) {
+	newLsn := atomic.AddUint64(&wal.lastLSN, 1)
 	walEntry := &WAL_Entry{
-		lsn:       wal.lastLSN + 1,
+		lsn:       newLsn,
 		length:    int32(len(commandData)),
 		data:      commandData,
 		checksum:  checksum(commandData),
 		timestamp: time.Now().UnixMilli(),
 	}
+	byteDataWalEntry, walEntryByteLength := MarshalWalEntry(walEntry)
 
-	byteDataWalEntry := MarshalWalEntry(walEntry)
-	walEntryByteLength := len(byteDataWalEntry)
+	wal.mu.Lock()
+	defer wal.mu.Unlock()
+
 	wal.rotateWalSegmentIfRequired(walEntryByteLength)
-
 	if _, err := wal.bufWriter.Write(byteDataWalEntry); err != nil {
 		// handle err
 	}
-	wal.lastLSN++
 	wal.currSegmentOffset += walEntryByteLength
 }
 
@@ -95,4 +109,20 @@ func (wal *WAL) rotateWalSegment() {
 	wal.currSegment = file
 	wal.currSegmentOffset = 0
 	wal.currSegmentIndex++
+}
+
+func (wal *WAL) syncWalBufferToDisk() {
+	for {
+		select {
+		case <-wal.bufSyncTicker.C:
+			wal.mu.Lock()
+			err := wal.bufWriter.Flush()
+			wal.mu.Unlock()
+			if err != nil {
+				//handle err
+			}
+		case <-wal.ctx.Done():
+			return
+		}
+	}
 }
