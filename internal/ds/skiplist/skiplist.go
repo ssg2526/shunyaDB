@@ -1,6 +1,7 @@
 package skiplist
 
 import (
+	"fmt"
 	"math/rand"
 )
 
@@ -17,7 +18,7 @@ type Skiplist struct {
 }
 
 func NewNode(key string, value string, lvl int) *Node {
-	return &Node{key: key, value: value, lvlPtrs: make([]*Node, lvl)}
+	return &Node{key: key, value: value, lvlPtrs: make([]*Node, lvl+1)}
 }
 
 func NewSkiplist(threshold float64, maxLevel int) *Skiplist {
@@ -51,17 +52,15 @@ func (skipList *Skiplist) Get(key string) (value string) {
 
 	for i := skipList.maxLevel - 1; i >= 0; i-- {
 
-		strCompare := compareString(curr.lvlPtrs[i].key, key)
-
-		for curr.lvlPtrs[i] != nil && strCompare < 0 {
+		for curr.lvlPtrs[i] != nil && compareString(curr.lvlPtrs[i].key, key) < 0 {
 			curr = curr.lvlPtrs[i]
 		}
 
-		if curr.lvlPtrs[i] != nil && strCompare == 0 {
+		if curr.lvlPtrs[i] != nil && compareString(curr.lvlPtrs[i].key, key) == 0 {
 			return curr.lvlPtrs[i].value
 		}
 	}
-	return ""
+	return "nil"
 }
 
 func (skipList *Skiplist) Insert(key string, value string) {
@@ -80,18 +79,18 @@ func (skipList *Skiplist) Insert(key string, value string) {
 
 	for i := skipList.maxLevel - 1; i >= 0; i-- {
 
-		strCompare := compareString(curr.lvlPtrs[i].key, key)
-
-		for curr.lvlPtrs[i] != nil && strCompare < 0 {
+		for curr.lvlPtrs[i] != nil && compareString(curr.lvlPtrs[i].key, key) < 0 {
 			curr = curr.lvlPtrs[i]
 		}
 		if curr.lvlPtrs[i] == nil {
 			if i <= insertLvl {
 				curr.lvlPtrs[i] = node
 			}
-		} else if strCompare > 0 && i <= insertLvl {
+		} else if compareString(curr.lvlPtrs[i].key, key) > 0 && i <= insertLvl {
 			node.lvlPtrs[i] = curr.lvlPtrs[i]
 			curr.lvlPtrs[i] = node
+		} else if compareString(curr.lvlPtrs[i].key, key) == 0 {
+			curr.lvlPtrs[i].value = node.value
 		}
 	}
 }
@@ -102,14 +101,13 @@ func (skipList *Skiplist) Delete(key string) bool {
 
 	for i := skipList.maxLevel - 1; i >= 0; i-- {
 
-		strCompare := compareString(curr.lvlPtrs[i].key, key)
-
-		for curr.lvlPtrs[i] != nil && strCompare < 0 {
+		for curr.lvlPtrs[i] != nil && compareString(curr.lvlPtrs[i].key, key) < 0 {
 			curr = curr.lvlPtrs[i]
 		}
-
-		if curr.lvlPtrs[i] != nil && strCompare == 0 {
+		if curr.lvlPtrs[i] != nil && compareString(curr.lvlPtrs[i].key, key) == 0 {
 			tmp := curr.lvlPtrs[i]
+			fmt.Println(tmp.key)
+			fmt.Println(len(tmp.lvlPtrs))
 			curr.lvlPtrs[i] = tmp.lvlPtrs[i]
 			tmp = nil
 			found = true

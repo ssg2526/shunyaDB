@@ -2,6 +2,7 @@ package client
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"net"
 	"os"
@@ -30,6 +31,8 @@ func handleConnection(conn net.Conn) {
 			fmt.Print("error reading data", inputBytes)
 			continue
 		}
+		inputBytes = bytes.TrimSpace(inputBytes)
+
 		_, errWrite := conn.Write(inputBytes)
 		if errWrite != nil {
 			fmt.Print("error sending command", errWrite)

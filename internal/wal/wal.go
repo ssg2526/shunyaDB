@@ -3,6 +3,7 @@ package wal
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -43,7 +44,7 @@ type WAL_Entry struct {
 }
 
 func InitWal() *WAL {
-
+	fmt.Println(config.ShunyaConfigs.WALDir)
 	currSegmentFile, currSegmentIndex, lastLSN := getCurrSegment(config.ShunyaConfigs.WALDir)
 	bufWriter := bufio.NewWriterSize(currSegmentFile, config.ShunyaConfigs.WALWriteBufferSize)
 	currSegmentOffset, err := currSegmentFile.Seek(0, io.SeekEnd)
@@ -82,6 +83,7 @@ func (wal *WAL) AppendToWal(commandData []byte) {
 		timestamp: time.Now().UnixMilli(),
 	}
 	byteDataWalEntry, walEntryByteLength := MarshalWalEntry(walEntry)
+	fmt.Println(wal.currSegment)
 
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
@@ -91,6 +93,10 @@ func (wal *WAL) AppendToWal(commandData []byte) {
 		// handle err
 	}
 	wal.currSegmentOffset += walEntryByteLength
+}
+
+func (wal *WAL) ReplayWal() {
+	//TODO:
 }
 
 func (wal *WAL) rotateWalSegmentIfRequired(size int) {

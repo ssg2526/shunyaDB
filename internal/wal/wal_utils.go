@@ -56,14 +56,17 @@ func getCurrSegment(logDir string) (*os.File, int, uint64) {
 		os.Mkdir(logDir, 0755)
 	}
 
-	dirEntries, err := filepath.Glob(filepath.Join(logDir, segmentPrefix+"*"+segmentPrefix))
+	dirEntries, err := filepath.Glob(filepath.Join(logDir, segmentPrefix+"*"+segmentSuffix))
 
 	if err != nil {
 		panic(err)
 	}
-	if len(dirEntries) != 0 {
+	if len(dirEntries) == 0 {
 		filename := getNewSegmentName(0)
+		fmt.Println(logDir)
+		fmt.Println(filename)
 		file, err := os.OpenFile(filepath.Join(logDir, filename), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		fmt.Println(filepath.Abs(filename))
 		if err != nil {
 			return file, 0, 0
 		}
@@ -102,6 +105,7 @@ func getLastLogSequenceNumber(file *os.File) uint64 {
 		readBytes := make([]byte, 1)
 		file.Read(readBytes)
 		if readBytes[0] == '\n' && step != 1 {
+			file.Seek(currOffset+1, io.SeekStart)
 			break
 		}
 	}

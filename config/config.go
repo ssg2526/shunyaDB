@@ -20,7 +20,7 @@ func InitConfig() {
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	// checks the below paths for config.yaml file
-	viper.AddConfigPath(".")
+	viper.AddConfigPath("../")
 	viper.AddConfigPath("/etc/shunyaDB")
 
 	err := viper.ReadInConfig()
