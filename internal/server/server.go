@@ -81,7 +81,6 @@ func parseAndValidateCommand(inputBytes []byte) (*CommandData, error) {
 	command := string(bytes.ToLower(byteSplitParts[0]))
 	switch command {
 	case "get":
-		// fmt.Println(byteSplitParts)
 		if len(byteSplitParts) != 2 {
 			return nil, errors.New("invalid get command")
 		}

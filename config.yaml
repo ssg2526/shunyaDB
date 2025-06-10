@@ -2,6 +2,6 @@ host: "localhost"
 port: 4345
 wal_dir: "./data/wal/"
 wal_should_fsync: false
-wal_flush_interval_millis: 100
+wal_flush_interval_millis: 5000
 wal_max_segment_size: 16777216
 wal_write_buffer_size: 1048576

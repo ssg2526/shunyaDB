@@ -53,37 +53,44 @@ func getCurrSegment(logDir string) (*os.File, int, uint64) {
 	_, err := os.Stat(logDir)
 
 	if os.IsNotExist(err) {
-		os.Mkdir(logDir, 0755)
+		err := os.MkdirAll(logDir, 0755)
+		if err != nil {
+			fmt.Println(err)
+			panic(err)
+		}
 	}
 
 	dirEntries, err := filepath.Glob(filepath.Join(logDir, segmentPrefix+"*"+segmentSuffix))
-
 	if err != nil {
 		panic(err)
 	}
 	if len(dirEntries) == 0 {
 		filename := getNewSegmentName(0)
-		fmt.Println(logDir)
-		fmt.Println(filename)
 		file, err := os.OpenFile(filepath.Join(logDir, filename), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		fmt.Println(filepath.Abs(filename))
 		if err != nil {
-			return file, 0, 0
+			fmt.Println(err)
 		}
+		return file, 0, 0
 	}
 
-	sort.Slice(dirEntries, func(i int, j int) bool {
-		return dirEntries[i] < dirEntries[j]
+	filenames := make([]string, len(dirEntries))
+	for i, name := range dirEntries {
+		filenames[i] = filepath.Base(name)
+	}
+
+	sort.Slice(filenames, func(i int, j int) bool {
+		return filenames[i] < filenames[j]
 	})
-	lastFileName := dirEntries[len(dirEntries)-1]
+	lastFileName := filenames[len(filenames)-1]
+	fmt.Println(lastFileName)
 	file, err := os.OpenFile(filepath.Join(logDir, lastFileName), os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		currentSegmentIndex := getSegmentIndexFromFileName(lastFileName)
-		lastLSN := getLastLogSequenceNumber(file) // handle error
-
-		return file, currentSegmentIndex, lastLSN
+		fmt.Println(err)
 	}
-	return nil, 0, 0
+	currentSegmentIndex := getSegmentIndexFromFileName(lastFileName)
+	lastLSN := getLastLogSequenceNumber(file)
+
+	return file, currentSegmentIndex, lastLSN
 }
 
 func getSegmentIndexFromFileName(filename string) int {
@@ -97,6 +104,7 @@ func getSegmentIndexFromFileName(filename string) int {
 func getLastLogSequenceNumber(file *os.File) uint64 {
 	eofOffset, err := file.Seek(0, io.SeekEnd)
 	if err != nil {
+		fmt.Println(err)
 		//handle err
 	}
 	for step := int64(1); eofOffset-step >= 0; step++ {
@@ -112,6 +120,7 @@ func getLastLogSequenceNumber(file *os.File) uint64 {
 	lsnBytesBuf := make([]byte, 8)
 	_, err1 := file.Read(lsnBytesBuf)
 	if err1 != nil {
+		fmt.Println(err1)
 		//handle err
 	}
 	lsn := binary.LittleEndian.Uint64(lsnBytesBuf)

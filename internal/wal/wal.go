@@ -46,17 +46,18 @@ type WAL_Entry struct {
 func InitWal() *WAL {
 	fmt.Println(config.ShunyaConfigs.WALDir)
 	currSegmentFile, currSegmentIndex, lastLSN := getCurrSegment(config.ShunyaConfigs.WALDir)
+	fmt.Printf("currseg, segInd, lastLsn = %v,%v,%v\n", currSegmentFile, currSegmentIndex, lastLSN)
 	bufWriter := bufio.NewWriterSize(currSegmentFile, config.ShunyaConfigs.WALWriteBufferSize)
 	currSegmentOffset, err := currSegmentFile.Seek(0, io.SeekEnd)
 	ctx, cancel := context.WithCancel(context.Background())
 	if err != nil {
-
+		fmt.Println(err)
 	}
 
 	wal := &WAL{
 		logDir:            config.ShunyaConfigs.WALDir,
 		shouldFsync:       config.ShunyaConfigs.WALShouldFsync,
-		bufSyncTicker:     time.NewTicker(time.Duration(config.ShunyaConfigs.WALBufSyncIntervalMillis)),
+		bufSyncTicker:     time.NewTicker(time.Duration(config.ShunyaConfigs.WALBufSyncIntervalMillis) * time.Millisecond),
 		maxSegmentSize:    config.ShunyaConfigs.WALMaxSegmentSize,
 		currSegment:       currSegmentFile,
 		currSegmentIndex:  currSegmentIndex,
@@ -83,13 +84,15 @@ func (wal *WAL) AppendToWal(commandData []byte) {
 		timestamp: time.Now().UnixMilli(),
 	}
 	byteDataWalEntry, walEntryByteLength := MarshalWalEntry(walEntry)
-	fmt.Println(wal.currSegment)
 
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
 
 	wal.rotateWalSegmentIfRequired(walEntryByteLength)
 	if _, err := wal.bufWriter.Write(byteDataWalEntry); err != nil {
+		if err != nil {
+			// fmt.Println(err)
+		}
 		// handle err
 	}
 	wal.currSegmentOffset += walEntryByteLength
@@ -110,6 +113,7 @@ func (wal *WAL) rotateWalSegment() {
 	newSegmentFile := getNewSegmentName(newSegmentIndex)
 	file, err := os.OpenFile(filepath.Join(wal.logDir, newSegmentFile), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
+		// fmt.Println(err)
 		// handle
 	}
 	wal.currSegment = file
@@ -125,6 +129,7 @@ func (wal *WAL) syncWalBufferToDisk() {
 			err := wal.bufWriter.Flush()
 			wal.mu.Unlock()
 			if err != nil {
+				fmt.Println(err)
 				//handle err
 			}
 		case <-wal.ctx.Done():

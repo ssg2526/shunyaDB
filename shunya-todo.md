@@ -115,4 +115,110 @@ Great! Here’s a **detailed project plan** broken down by phases with clear mil
 
 ---
 
+# 🗺️ ShunyaDB Project Timeline (12-Month Plan)
+
+This roadmap outlines the monthly milestones for building **ShunyaDB**, a production-grade, log-structured key-value store with WAL, Memtable, and SSTable-based persistence.
+
+---
+## TEST THIS PATH AS WELL
+## 📦 Phase 1: WAL + In-Memory KV Store (Month 1–2)
+
+### ✅ Month 1: WAL Foundation
+- Implement Write-Ahead Log (WAL)
+  - LSN, timestamp, checksum, length
+  - Append-only with segment rotation
+- Use `sync.Pool` for header buffer reuse
+- Implement atomic LSN generation using `sync/atomic`
+- Flush using `bufio.Writer` and `Ticker`
+- Add basic locking for concurrent safety
+- Unit tests and benchmarks for WAL
+
+### ✅ Month 2: Memtable and Recovery
+- Implement in-memory store (map or skiplist)
+- Command parsing: `set`, `get`, `del`
+- Marshal commands into byte format
+- WAL replay during server start
+- Basic validation and crash recovery
+
+---
+
+## 🗃️ Phase 2: SSTable Persistence (Month 3–5)
+
+### ✅ Month 3: SSTable Write Path
+- SSTable file format: sorted key-value pairs
+- Serialize Memtable to SSTable on flush
+- Add footer/index to SSTable
+- Implement Bloom filter for fast key lookups
+
+### ✅ Month 4: Read Path + Indexing
+- Sparse index or fence pointers for fast seeks
+- Read path: Memtable → WAL → SSTables
+- Basic range scan support
+
+### ✅ Month 5: Compaction Prep
+- Background L0→L1 compaction logic
+- File versioning and manifest file
+- Compaction policies (size-tiered or leveled)
+
+---
+
+## 🔁 Phase 3: LSM Tree and Tombstone Handling (Month 6–7)
+
+### ✅ Month 6: Compaction Engine
+- Compaction manager goroutine
+- Merge + dedup logic for SSTables
+- Handle tombstone entries for deletes
+
+### ✅ Month 7: LSM Tree Stabilization
+- Multi-level compaction strategies
+- Recovery testing with WAL + SSTable replay
+- Compaction throttling/backpressure
+
+---
+
+## 🚀 Phase 4: Advanced Features (Month 8–10)
+
+### ✅ Month 8: Snapshots and Range Reads
+- Read-only snapshot interface
+- MVCC-style reads or Memtable freezing
+
+### ✅ Month 9: TTL and Batch Writes
+- Add TTL support per key
+- Implement batch writes (atomic appends)
+
+### ✅ Month 10: Compression
+- Add Snappy or ZSTD compression
+- Benchmark SSTable size vs performance
+
+---
+
+## 📡 Phase 5: Networking and RPC (Month 11)
+
+### ✅ Month 11: Networking Interface
+- TCP or gRPC server for handling client requests
+- Thread-safe Memtable/WAL access
+- Metrics (latency, throughput) with Prometheus
+
+---
+
+## 📦 Phase 6: Packaging and Launch (Month 12)
+
+### ✅ Month 12: Polish and Launch
+- CLI client for `set`, `get`, `del`
+- Persistence/corruption tests
+- Add `README`, architecture diagrams, and blog
+- GitHub-ready: license, issues, contribution guide
+
+---
+
+## 🛠️ Stack
+
+- **Language**: Go
+- **Modules**: `os`, `sync`, `bufio`, `encoding/binary`, `xxhash`, `context`
+- **Testing**: `testing`, `benchmarks`, fault injection
+- **Optional**: Compare against BoltDB, RocksDB
+
+---
+
+_Track progress, commit frequently, and ship iteratively. You got this!_
 
