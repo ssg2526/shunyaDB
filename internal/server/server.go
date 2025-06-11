@@ -63,7 +63,10 @@ func handleConnection(conn net.Conn, wal *wal.WAL, memtable *memtable.Memtable) 
 			continue
 		}
 
-		wal.AppendToWal(buff[:bytesRed])
+		if commandData.op != uint16(GET) {
+			wal.AppendToWal(buff[:bytesRed])
+		}
+
 		returnVal, _ := executeCommand(commandData, memtable)
 		_, errWrite := conn.Write([]byte(returnVal))
 		if errWrite != nil {

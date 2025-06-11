@@ -109,13 +109,26 @@ func (wal *WAL) rotateWalSegmentIfRequired(size int) {
 }
 
 func (wal *WAL) rotateWalSegment() {
+	if wal.bufWriter != nil {
+		if err := wal.bufWriter.Flush(); err != nil {
+			fmt.Println("flush error:", err)
+		}
+	}
+
+	if wal.currSegment != nil {
+		if errClose := wal.currSegment.Close(); errClose != nil {
+			fmt.Println("closing segment err", errClose)
+		}
+	}
+
 	newSegmentIndex := wal.currSegmentIndex + 1
 	newSegmentFile := getNewSegmentName(newSegmentIndex)
 	file, err := os.OpenFile(filepath.Join(wal.logDir, newSegmentFile), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		// fmt.Println(err)
-		// handle
+		fmt.Println("open new segment file err", err)
 	}
+
+	wal.bufWriter = bufio.NewWriterSize(file, config.ShunyaConfigs.WALWriteBufferSize)
 	wal.currSegment = file
 	wal.currSegmentOffset = 0
 	wal.currSegmentIndex++
