@@ -1,26 +1,37 @@
 package memtable
 
 import (
-	"github.com/ssg2526/shunya/internal/ds/skiplist"
+	constants "github.com/ssg2526/shunya/internal/constants"
 )
 
-type Memtable struct {
-	skiplist  *skiplist.Skiplist
-	sizeBytes int
+type Memtable interface {
+	Get(key string) string
+	Put(key string, value string, lsn constants.LsnType, entryType constants.EntryType) string
+	Size() int
 }
 
-func NewMemtable() *Memtable {
-	return &Memtable{skiplist: skiplist.NewSkiplist(0.5, 12)}
+type MemTableType uint8
+type MemTableStatus uint8
+
+const (
+	MUTABLE MemTableStatus = iota
+	FLUSHPENDING
+	FLUSHING
+)
+
+const (
+	SKIPLIST MemTableType = iota
+)
+
+type BaseMemtable struct {
+	status MemTableStatus
 }
 
-func (memtable *Memtable) Get(key string) string {
-	return memtable.skiplist.Get(key)
-}
-
-func (memtable *Memtable) Insert(key string, value string) {
-	memtable.skiplist.Insert(key, value)
-}
-
-func (memtable *Memtable) Delete(key string) bool {
-	return memtable.skiplist.Delete(key)
+func NewMemtable(mtType MemTableType) Memtable {
+	switch mtType {
+	case SKIPLIST:
+		return NewMemSkiplist()
+	default:
+		return NewMemSkiplist()
+	}
 }

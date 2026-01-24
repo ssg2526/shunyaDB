@@ -129,6 +129,7 @@ func (wal *WAL) rotateWalSegment() {
 	}
 
 	wal.bufWriter = bufio.NewWriterSize(file, config.ShunyaConfigs.WALWriteBufferSize)
+	// wal.bufWriter.Reset(file) // could be another option
 	wal.currSegment = file
 	wal.currSegmentOffset = 0
 	wal.currSegmentIndex++

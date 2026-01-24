@@ -1,24 +1,30 @@
 package skiplist
 
 import (
-	"fmt"
 	"math/rand"
+
+	constants "github.com/ssg2526/shunya/internal/constants"
 )
 
 type Node struct {
-	key     string
-	value   string
-	lvlPtrs []*Node
+	key       string
+	value     string
+	entryType constants.EntryType
+	lsn       constants.LsnType
+	lvlPtrs   []*Node
 }
 
 type Skiplist struct {
 	threshold float64
 	maxLevel  int
 	head      *Node
+	size      int
 }
 
-func NewNode(key string, value string, lvl int) *Node {
-	return &Node{key: key, value: value, lvlPtrs: make([]*Node, lvl+1)}
+//TODO: Need to do handle concurrent cases for correctness
+
+func NewNode(key string, value string, lsn constants.LsnType, entryType constants.EntryType, lvl int) *Node {
+	return &Node{key: key, value: value, lsn: lsn, lvlPtrs: make([]*Node, lvl+1)}
 }
 
 func NewSkiplist(threshold float64, maxLevel int) *Skiplist {
@@ -47,6 +53,11 @@ func shouldMoveToNextLvl(threshold float64) bool {
 	return rand_toss > threshold
 }
 
+// func (skipList *Skiplist) findNearestNodeToKey(key string) ([]*Node, bool) {
+
+// 	return nodeList, false
+// }
+
 func (skipList *Skiplist) Get(key string) (value string) {
 	curr := skipList.head
 
@@ -63,7 +74,27 @@ func (skipList *Skiplist) Get(key string) (value string) {
 	return "nil"
 }
 
-func (skipList *Skiplist) Insert(key string, value string) {
+func (skipList *Skiplist) Put(key string, value string, lsn constants.LsnType, entryType constants.EntryType) {
+	nodeList := make([]*Node, skipList.maxLevel)
+
+	curr := skipList.head
+
+	for i := skipList.maxLevel - 1; i >= 0; i-- {
+		for curr.lvlPtrs[i] != nil && compareString(curr.lvlPtrs[i].key, key) < 0 {
+			curr = curr.lvlPtrs[i]
+		}
+		// NOTE: Early return on key found at higher levels.
+		// This assumes skiplist invariant holds strictly.
+		// Revisit when adding concurrency or lock-free traversal and check if we need to go to level 0 and then update
+		if curr.lvlPtrs[i] != nil && compareString(curr.lvlPtrs[i].key, key) == 0 {
+			curr.lvlPtrs[i].lsn = lsn
+			curr.lvlPtrs[i].value = value
+			curr.lvlPtrs[i].entryType = entryType
+			return
+		}
+		nodeList[i] = curr
+	}
+
 	insertLvl := 0
 
 	for shouldMoveToNextLvl(skipList.threshold) {
@@ -73,45 +104,18 @@ func (skipList *Skiplist) Insert(key string, value string) {
 			break
 		}
 	}
-	node := NewNode(key, value, insertLvl)
 
-	curr := skipList.head
+	node := NewNode(key, value, lsn, entryType, insertLvl)
 
-	for i := skipList.maxLevel - 1; i >= 0; i-- {
-
-		for curr.lvlPtrs[i] != nil && compareString(curr.lvlPtrs[i].key, key) < 0 {
-			curr = curr.lvlPtrs[i]
-		}
-		if curr.lvlPtrs[i] == nil {
-			if i <= insertLvl {
-				curr.lvlPtrs[i] = node
-			}
-		} else if compareString(curr.lvlPtrs[i].key, key) > 0 && i <= insertLvl {
-			node.lvlPtrs[i] = curr.lvlPtrs[i]
-			curr.lvlPtrs[i] = node
-		} else if compareString(curr.lvlPtrs[i].key, key) == 0 {
-			curr.lvlPtrs[i].value = node.value
+	for i := len(nodeList) - 1; i >= 0; i-- {
+		if i <= insertLvl {
+			node.lvlPtrs[i] = nodeList[i].lvlPtrs[i]
+			nodeList[i].lvlPtrs[i] = node
 		}
 	}
+	skipList.size += len(key) + len(value) + 8
 }
 
-func (skipList *Skiplist) Delete(key string) bool {
-	found := false
-	curr := skipList.head
-
-	for i := skipList.maxLevel - 1; i >= 0; i-- {
-
-		for curr.lvlPtrs[i] != nil && compareString(curr.lvlPtrs[i].key, key) < 0 {
-			curr = curr.lvlPtrs[i]
-		}
-		if curr.lvlPtrs[i] != nil && compareString(curr.lvlPtrs[i].key, key) == 0 {
-			tmp := curr.lvlPtrs[i]
-			fmt.Println(tmp.key)
-			fmt.Println(len(tmp.lvlPtrs))
-			curr.lvlPtrs[i] = tmp.lvlPtrs[i]
-			tmp = nil
-			found = true
-		}
-	}
-	return found
+func (skiplist *Skiplist) Size() int {
+	return skiplist.size
 }

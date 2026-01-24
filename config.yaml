@@ -1,7 +1,11 @@
 host: "localhost"
 port: 4345
+store_meta_dir: "./data/"
 wal_dir: "./data/wal/"
 wal_should_fsync: false
 wal_flush_interval_millis: 5000
 wal_max_segment_size: 4096
 wal_write_buffer_size: 1048576
+sst_dir: "./data/sstables/"
+sst_write_buffer_size: 65536
+mem_table_type: "skiplist"

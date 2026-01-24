@@ -7,8 +7,7 @@ import (
 	"net"
 
 	"github.com/ssg2526/shunya/config"
-	"github.com/ssg2526/shunya/internal/memtable"
-	"github.com/ssg2526/shunya/internal/wal"
+	"github.com/ssg2526/shunya/internal/storage"
 )
 
 type Command int
@@ -28,8 +27,7 @@ type CommandData struct {
 
 func Start() {
 	config.InitConfig()
-	wal := wal.InitWal()
-	memtable := memtable.NewMemtable()
+	storageEngine := storage.InitStorage()
 	ln, err := net.Listen("tcp", ":4242")
 	if err != nil {
 		fmt.Println("error while starting the Shunya server")
@@ -42,11 +40,11 @@ func Start() {
 			fmt.Printf("error while accepting connection")
 			continue
 		}
-		go handleConnection(conn, wal, memtable)
+		go handleConnection(conn, storageEngine)
 	}
 }
 
-func handleConnection(conn net.Conn, wal *wal.WAL, memtable *memtable.Memtable) {
+func handleConnection(conn net.Conn, storage *storage.Storage) {
 	defer conn.Close()
 
 	buff := make([]byte, 1024)
@@ -64,10 +62,10 @@ func handleConnection(conn net.Conn, wal *wal.WAL, memtable *memtable.Memtable) 
 		}
 
 		if commandData.op != uint16(GET) {
-			wal.AppendToWal(buff[:bytesRed])
+			storage.AppendToWal(buff[:bytesRed])
 		}
 
-		returnVal, _ := executeCommand(commandData, memtable)
+		returnVal, _ := executeCommand(commandData, storage)
 		_, errWrite := conn.Write([]byte(returnVal))
 		if errWrite != nil {
 			fmt.Print("error while sending ack")
@@ -124,14 +122,14 @@ func parseAndValidateCommand(inputBytes []byte) (*CommandData, error) {
 	}
 }
 
-func executeCommand(commandData *CommandData, memtable *memtable.Memtable) (string, error) {
+func executeCommand(commandData *CommandData, storage *storage.Storage) (string, error) {
 	if commandData.op == uint16(GET) {
-		return memtable.Get(string(commandData.key)), nil
+		return storage.Get(commandData.key), nil
 	} else if commandData.op == uint16(SET) {
-		memtable.Insert(string(commandData.key), string(commandData.value))
+		storage.Put(commandData.key, commandData.value)
 		return "OK", nil
 	} else if commandData.op == uint16(DEL) {
-		if memtable.Delete(string(commandData.key)) {
+		if storage.Del(commandData.key) == "OK" {
 			return "OK", nil
 		}
 		return "Failed", nil
