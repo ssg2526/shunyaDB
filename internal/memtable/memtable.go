@@ -5,8 +5,8 @@ import (
 )
 
 type Memtable interface {
-	Get(key string) string
-	Put(key string, value string, lsn constants.LsnType, entryType constants.EntryType) string
+	Get(key []byte) []byte
+	Put(key []byte, value []byte, lsn constants.LsnType, entryType constants.EntryType) []byte
 	Size() int
 }
 

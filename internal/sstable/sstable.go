@@ -36,7 +36,7 @@ func (sstable *SSTable) Flush(memtable memtable.Memtable, fileName string) {
 	if err != nil {
 		fmt.Println("open new sstable file err", err)
 	}
-	//TODO: marshall memtable
+	//TODO: implement
 
 }
 

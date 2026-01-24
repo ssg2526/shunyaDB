@@ -1,14 +1,15 @@
 package skiplist
 
 import (
+	"bytes"
 	"math/rand"
 
 	constants "github.com/ssg2526/shunya/internal/constants"
 )
 
 type Node struct {
-	key       string
-	value     string
+	key       []byte
+	value     []byte
 	entryType constants.EntryType
 	lsn       constants.LsnType
 	lvlPtrs   []*Node
@@ -23,15 +24,15 @@ type Skiplist struct {
 
 //TODO: Need to do handle concurrent cases for correctness
 
-func NewNode(key string, value string, lsn constants.LsnType, entryType constants.EntryType, lvl int) *Node {
+func NewNode(key []byte, value []byte, lsn constants.LsnType, entryType constants.EntryType, lvl int) *Node {
 	return &Node{key: key, value: value, lsn: lsn, lvlPtrs: make([]*Node, lvl+1)}
 }
 
 func NewSkiplist(threshold float64, maxLevel int) *Skiplist {
 	return &Skiplist{
 		head: &Node{
-			key:     "",
-			value:   "",
+			key:     nil,
+			value:   nil,
 			lvlPtrs: make([]*Node, maxLevel),
 		},
 		threshold: threshold,
@@ -48,6 +49,10 @@ func compareString(s1 string, s2 string) int {
 	return 0
 }
 
+func compareBytes(b1 []byte, b2 []byte) int {
+	return bytes.Compare(b1, b2)
+}
+
 func shouldMoveToNextLvl(threshold float64) bool {
 	rand_toss := rand.Float64()
 	return rand_toss > threshold
@@ -58,35 +63,35 @@ func shouldMoveToNextLvl(threshold float64) bool {
 // 	return nodeList, false
 // }
 
-func (skipList *Skiplist) Get(key string) (value string) {
+func (skipList *Skiplist) Get(key []byte) (value []byte) {
 	curr := skipList.head
 
 	for i := skipList.maxLevel - 1; i >= 0; i-- {
 
-		for curr.lvlPtrs[i] != nil && compareString(curr.lvlPtrs[i].key, key) < 0 {
+		for curr.lvlPtrs[i] != nil && bytes.Compare(curr.lvlPtrs[i].key, key) < 0 {
 			curr = curr.lvlPtrs[i]
 		}
 
-		if curr.lvlPtrs[i] != nil && compareString(curr.lvlPtrs[i].key, key) == 0 {
+		if curr.lvlPtrs[i] != nil && bytes.Compare(curr.lvlPtrs[i].key, key) == 0 {
 			return curr.lvlPtrs[i].value
 		}
 	}
-	return "nil"
+	return nil
 }
 
-func (skipList *Skiplist) Put(key string, value string, lsn constants.LsnType, entryType constants.EntryType) {
+func (skipList *Skiplist) Put(key []byte, value []byte, lsn constants.LsnType, entryType constants.EntryType) {
 	nodeList := make([]*Node, skipList.maxLevel)
 
 	curr := skipList.head
 
 	for i := skipList.maxLevel - 1; i >= 0; i-- {
-		for curr.lvlPtrs[i] != nil && compareString(curr.lvlPtrs[i].key, key) < 0 {
+		for curr.lvlPtrs[i] != nil && bytes.Compare(curr.lvlPtrs[i].key, key) < 0 {
 			curr = curr.lvlPtrs[i]
 		}
 		// NOTE: Early return on key found at higher levels.
 		// This assumes skiplist invariant holds strictly.
 		// Revisit when adding concurrency or lock-free traversal and check if we need to go to level 0 and then update
-		if curr.lvlPtrs[i] != nil && compareString(curr.lvlPtrs[i].key, key) == 0 {
+		if curr.lvlPtrs[i] != nil && bytes.Compare(curr.lvlPtrs[i].key, key) == 0 {
 			curr.lvlPtrs[i].lsn = lsn
 			curr.lvlPtrs[i].value = value
 			curr.lvlPtrs[i].entryType = entryType

@@ -16,13 +16,13 @@ func NewMemSkiplist() *MemSkiplist {
 		skiplist:     skiplist.NewSkiplist(0.5, 12)}
 }
 
-func (memSkiplist *MemSkiplist) Get(key string) string {
+func (memSkiplist *MemSkiplist) Get(key []byte) []byte {
 	return memSkiplist.skiplist.Get(key)
 }
 
-func (memSkiplist *MemSkiplist) Put(key string, value string, lsn constants.LsnType, entryType constants.EntryType) string {
+func (memSkiplist *MemSkiplist) Put(key []byte, value []byte, lsn constants.LsnType, entryType constants.EntryType) []byte {
 	memSkiplist.skiplist.Put(key, value, lsn, constants.PutEntry)
-	return ""
+	return nil
 }
 
 func (MemSkiplist *MemSkiplist) Size() int {
