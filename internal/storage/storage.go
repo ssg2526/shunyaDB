@@ -12,8 +12,8 @@ type Storage struct {
 	wal *wal.WAL
 }
 
-func (storage *Storage) AppendToWal(commandData []byte) {
-	storage.wal.AppendToWal(commandData)
+func (storage *Storage) AppendToWal(commandData []byte) constants.LsnType {
+	return storage.wal.AppendToWal(commandData)
 }
 
 func InitStorage() *Storage {
@@ -41,9 +41,13 @@ func (storage *Storage) Get(key []byte) string {
 	return ""
 }
 
-func (storage *Storage) Put(key []byte, value []byte, lsn constants.LsnType, entryType constants.EntryType) string {
+func (storage *Storage) Put(key []byte, value []byte, lsn constants.LsnType) string {
 	//TODO: directly put to memtable
-	storage.mtQ[0].Put(string(key), string(value), lsn, entryType)
+	storage.mtQ[0].Put(string(key), string(value), lsn, constants.PutEntry)
 	return "OK"
+}
 
+func (storage *Storage) Del(key []byte, lsn constants.LsnType) string {
+	storage.mtQ[0].Put(string(key), "", lsn, constants.DelEntry)
+	return "OK"
 }

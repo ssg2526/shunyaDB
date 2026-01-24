@@ -7,6 +7,7 @@ import (
 	"net"
 
 	"github.com/ssg2526/shunya/config"
+	constants "github.com/ssg2526/shunya/internal/constants"
 	"github.com/ssg2526/shunya/internal/storage"
 )
 
@@ -60,12 +61,12 @@ func handleConnection(conn net.Conn, storage *storage.Storage) {
 			conn.Write([]byte("command failed"))
 			continue
 		}
-
+		var lsn constants.LsnType
 		if commandData.op != uint16(GET) {
-			storage.AppendToWal(buff[:bytesRed])
+			lsn = storage.AppendToWal(buff[:bytesRed])
 		}
 
-		returnVal, _ := executeCommand(commandData, storage)
+		returnVal, _ := executeCommand(commandData, lsn, storage)
 		_, errWrite := conn.Write([]byte(returnVal))
 		if errWrite != nil {
 			fmt.Print("error while sending ack")
@@ -122,14 +123,14 @@ func parseAndValidateCommand(inputBytes []byte) (*CommandData, error) {
 	}
 }
 
-func executeCommand(commandData *CommandData, storage *storage.Storage) (string, error) {
+func executeCommand(commandData *CommandData, lsn constants.LsnType, storage *storage.Storage) (string, error) {
 	if commandData.op == uint16(GET) {
 		return storage.Get(commandData.key), nil
 	} else if commandData.op == uint16(SET) {
-		storage.Put(commandData.key, commandData.value)
+		storage.Put(commandData.key, commandData.value, lsn)
 		return "OK", nil
 	} else if commandData.op == uint16(DEL) {
-		if storage.Del(commandData.key) == "OK" {
+		if storage.Del(commandData.key, lsn) == "OK" {
 			return "OK", nil
 		}
 		return "Failed", nil

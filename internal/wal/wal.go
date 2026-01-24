@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	constants "github.com/ssg2526/shunya/internal/constants"
+
 	"github.com/ssg2526/shunya/config"
 )
 
@@ -74,7 +76,7 @@ func InitWal() *WAL {
 	return wal
 }
 
-func (wal *WAL) AppendToWal(commandData []byte) {
+func (wal *WAL) AppendToWal(commandData []byte) constants.LsnType {
 	newLsn := atomic.AddUint64(&wal.lastLSN, 1)
 	walEntry := &WAL_Entry{
 		lsn:       newLsn,
@@ -96,6 +98,7 @@ func (wal *WAL) AppendToWal(commandData []byte) {
 		// handle err
 	}
 	wal.currSegmentOffset += walEntryByteLength
+	return constants.LsnType(newLsn)
 }
 
 func (wal *WAL) ReplayWal() {
