@@ -125,7 +125,7 @@ func parseAndValidateCommand(inputBytes []byte) (*CommandData, error) {
 
 func executeCommand(commandData *CommandData, lsn constants.LsnType, storage *storage.Storage) (string, error) {
 	if commandData.op == uint16(GET) {
-		return storage.Get(commandData.key), nil
+		return storage.Get(commandData.key, lsn), nil
 	} else if commandData.op == uint16(SET) {
 		storage.Put(commandData.key, commandData.value, lsn)
 		return "OK", nil

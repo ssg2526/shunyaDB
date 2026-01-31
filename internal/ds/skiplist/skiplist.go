@@ -8,11 +8,15 @@ import (
 )
 
 type Node struct {
-	key       []byte
+	key      []byte
+	versions []Version
+	lvlPtrs  []*Node
+}
+
+type Version struct {
 	value     []byte
-	entryType constants.EntryType
 	lsn       constants.LsnType
-	lvlPtrs   []*Node
+	entryType constants.EntryType
 }
 
 type Skiplist struct {
@@ -25,32 +29,19 @@ type Skiplist struct {
 //TODO: Need to do handle concurrent cases for correctness
 
 func NewNode(key []byte, value []byte, lsn constants.LsnType, entryType constants.EntryType, lvl int) *Node {
-	return &Node{key: key, value: value, lsn: lsn, lvlPtrs: make([]*Node, lvl+1)}
+	versions := []Version{{value: value, lsn: lsn, entryType: entryType}}
+	return &Node{key: key, versions: versions, lvlPtrs: make([]*Node, lvl+1)}
 }
 
 func NewSkiplist(threshold float64, maxLevel int) *Skiplist {
 	return &Skiplist{
 		head: &Node{
-			key:     nil,
-			value:   nil,
-			lvlPtrs: make([]*Node, maxLevel),
+			key:      nil,
+			versions: []Version{{value: nil, lsn: 0}},
+			lvlPtrs:  make([]*Node, maxLevel),
 		},
 		threshold: threshold,
 		maxLevel:  maxLevel}
-}
-
-func compareString(s1 string, s2 string) int {
-	// TODO: this needs optimizations
-	if s1 < s2 {
-		return -1
-	} else if s1 > s2 {
-		return 1
-	}
-	return 0
-}
-
-func compareBytes(b1 []byte, b2 []byte) int {
-	return bytes.Compare(b1, b2)
 }
 
 func shouldMoveToNextLvl(threshold float64) bool {
@@ -58,12 +49,7 @@ func shouldMoveToNextLvl(threshold float64) bool {
 	return rand_toss > threshold
 }
 
-// func (skipList *Skiplist) findNearestNodeToKey(key string) ([]*Node, bool) {
-
-// 	return nodeList, false
-// }
-
-func (skipList *Skiplist) Get(key []byte) (value []byte) {
+func (skipList *Skiplist) Get(key []byte, snapshotLsn constants.LsnType) (value []byte) {
 	curr := skipList.head
 
 	for i := skipList.maxLevel - 1; i >= 0; i-- {
@@ -73,7 +59,15 @@ func (skipList *Skiplist) Get(key []byte) (value []byte) {
 		}
 
 		if curr.lvlPtrs[i] != nil && bytes.Compare(curr.lvlPtrs[i].key, key) == 0 {
-			return curr.lvlPtrs[i].value
+			for j := len(curr.lvlPtrs[i].versions) - 1; j >= 0; j-- {
+				if curr.lvlPtrs[i].versions[j].lsn <= snapshotLsn {
+					if curr.lvlPtrs[i].versions[j].entryType == constants.DelEntry {
+						return nil
+					}
+					return curr.lvlPtrs[i].versions[j].value
+				}
+			}
+			return nil
 		}
 	}
 	return nil
@@ -92,10 +86,12 @@ func (skipList *Skiplist) Put(key []byte, value []byte, lsn constants.LsnType, e
 		// This assumes skiplist invariant holds strictly.
 		// Revisit when adding concurrency or lock-free traversal and check if we need to go to level 0 and then update
 		if curr.lvlPtrs[i] != nil && bytes.Compare(curr.lvlPtrs[i].key, key) == 0 {
-			curr.lvlPtrs[i].lsn = lsn
-			curr.lvlPtrs[i].value = value
-			curr.lvlPtrs[i].entryType = entryType
-			return
+			if curr.lvlPtrs[i].versions[len(curr.lvlPtrs[0].versions)-1].lsn < lsn {
+				curr.lvlPtrs[0].versions = append(curr.lvlPtrs[0].versions, Version{value: value, lsn: lsn, entryType: entryType})
+				return
+			} else {
+				panic("lsn failure") //to be handled later
+			}
 		}
 		nodeList[i] = curr
 	}
@@ -118,9 +114,13 @@ func (skipList *Skiplist) Put(key []byte, value []byte, lsn constants.LsnType, e
 			nodeList[i].lvlPtrs[i] = node
 		}
 	}
-	skipList.size += len(key) + len(value) + 8
+	skipList.size += len(key) + len(value) + 8 // to be improved lated
 }
 
 func (skiplist *Skiplist) Size() int {
 	return skiplist.size
+}
+
+func (skiplist *Skiplist) Validate() bool {
+	return true
 }

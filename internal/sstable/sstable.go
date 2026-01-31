@@ -7,6 +7,7 @@ import (
 	"path"
 
 	"github.com/ssg2526/shunya/config"
+	constants "github.com/ssg2526/shunya/internal/constants"
 	"github.com/ssg2526/shunya/internal/memtable"
 )
 
@@ -16,6 +17,35 @@ type SSTable struct {
 	headerOffset int
 	footerOffset int
 	dataOffset   int
+}
+
+type SSTBlock struct {
+	blockLen   int
+	entryCount int
+	entries    []*SSTBlockEntry
+	checksum   uint64
+}
+
+type SSTBlockEntry struct {
+	lsn   constants.LsnType
+	key   []byte
+	value []byte
+}
+
+type SSTFooter struct {
+	indexOffset int
+	indexLen    int
+	version     uint16
+	magic       [8]byte
+}
+
+type SSTIndex struct {
+	keyLen    int
+	keyOffset int
+	key       []byte //this is start key of the block
+}
+
+type SSTHeader struct {
 }
 
 func OpenSSTable() *SSTable {
@@ -32,10 +62,11 @@ func OpenSSTable() *SSTable {
 }
 
 func (sstable *SSTable) Flush(memtable memtable.Memtable, fileName string) {
-	sstFile, err := os.OpenFile(path.Join(config.ShunyaConfigs.SSTableDir, fileName), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		fmt.Println("open new sstable file err", err)
-	}
+	// sstFile, err := os.OpenFile(path.Join(config.ShunyaConfigs.SSTableDir, fileName), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// if err != nil {
+	// 	fmt.Println("open new sstable file err", err)
+	// }
+	// sstable.bufWriter.Write()
 	//TODO: implement
 
 }

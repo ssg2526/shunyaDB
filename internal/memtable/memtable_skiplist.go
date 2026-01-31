@@ -16,8 +16,8 @@ func NewMemSkiplist() *MemSkiplist {
 		skiplist:     skiplist.NewSkiplist(0.5, 12)}
 }
 
-func (memSkiplist *MemSkiplist) Get(key []byte) []byte {
-	return memSkiplist.skiplist.Get(key)
+func (memSkiplist *MemSkiplist) Get(key []byte, lsn constants.LsnType) []byte {
+	return memSkiplist.skiplist.Get(key, lsn)
 }
 
 func (memSkiplist *MemSkiplist) Put(key []byte, value []byte, lsn constants.LsnType, entryType constants.EntryType) []byte {

@@ -35,14 +35,13 @@ func InitStorage() *Storage {
 
 }
 
-func (storage *Storage) Get(key []byte) string {
+func (storage *Storage) Get(key []byte, lsn constants.LsnType) string {
 	//TODO: check in mutable mem first then check in immutable mem and if not present move to sstables
-	storage.mtQ[0].Get(key)
+	storage.mtQ[0].Get(key, lsn)
 	return ""
 }
 
 func (storage *Storage) Put(key []byte, value []byte, lsn constants.LsnType) string {
-	//TODO: directly put to memtable
 	storage.mtQ[0].Put(key, value, lsn, constants.PutEntry)
 	return "OK"
 }
