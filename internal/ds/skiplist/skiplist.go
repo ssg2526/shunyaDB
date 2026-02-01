@@ -73,6 +73,7 @@ func (skipList *Skiplist) Get(key []byte, snapshotLsn constants.LsnType) (value 
 	return nil
 }
 
+// TODO: need to handle concurrent writes yet - choose either single write or lock free model
 func (skipList *Skiplist) Put(key []byte, value []byte, lsn constants.LsnType, entryType constants.EntryType) {
 	nodeList := make([]*Node, skipList.maxLevel)
 
@@ -82,18 +83,17 @@ func (skipList *Skiplist) Put(key []byte, value []byte, lsn constants.LsnType, e
 		for curr.lvlPtrs[i] != nil && bytes.Compare(curr.lvlPtrs[i].key, key) < 0 {
 			curr = curr.lvlPtrs[i]
 		}
-		// NOTE: Early return on key found at higher levels.
-		// This assumes skiplist invariant holds strictly.
-		// Revisit when adding concurrency or lock-free traversal and check if we need to go to level 0 and then update
-		if curr.lvlPtrs[i] != nil && bytes.Compare(curr.lvlPtrs[i].key, key) == 0 {
-			if curr.lvlPtrs[i].versions[len(curr.lvlPtrs[0].versions)-1].lsn < lsn {
-				curr.lvlPtrs[0].versions = append(curr.lvlPtrs[0].versions, Version{value: value, lsn: lsn, entryType: entryType})
-				return
-			} else {
-				panic("lsn failure") //to be handled later
-			}
-		}
 		nodeList[i] = curr
+	}
+
+	target := nodeList[0].lvlPtrs[0]
+	if target != nil && bytes.Equal(target.key, key) {
+		if target.versions[len(target.versions)-1].lsn < lsn {
+			target.versions = append(target.versions, Version{value: value, lsn: lsn, entryType: entryType})
+			skipList.size += len(value) + 8
+			return
+		}
+		panic("larger lsn found") // to be handled later
 	}
 
 	insertLvl := 0
