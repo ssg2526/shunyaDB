@@ -28,7 +28,7 @@ type Skiplist struct {
 
 //TODO: Need to do handle concurrent cases for correctness
 
-func NewNode(key []byte, value []byte, lsn constants.LsnType, entryType constants.EntryType, lvl int) *Node {
+func newNode(key []byte, value []byte, lsn constants.LsnType, entryType constants.EntryType, lvl int) *Node {
 	versions := []Version{{value: value, lsn: lsn, entryType: entryType}}
 	return &Node{key: key, versions: versions, lvlPtrs: make([]*Node, lvl+1)}
 }
@@ -106,7 +106,7 @@ func (skipList *Skiplist) Put(key []byte, value []byte, lsn constants.LsnType, e
 		}
 	}
 
-	node := NewNode(key, value, lsn, entryType, insertLvl)
+	node := newNode(key, value, lsn, entryType, insertLvl)
 
 	for i := len(nodeList) - 1; i >= 0; i-- {
 		if i <= insertLvl {

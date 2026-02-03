@@ -3,6 +3,7 @@ package memtable
 import (
 	constants "github.com/ssg2526/shunya/internal/constants"
 	"github.com/ssg2526/shunya/internal/ds/skiplist"
+	"github.com/ssg2526/shunya/internal/iterator"
 )
 
 type MemSkiplist struct {
@@ -23,6 +24,10 @@ func (memSkiplist *MemSkiplist) Get(key []byte, lsn constants.LsnType) []byte {
 func (memSkiplist *MemSkiplist) Put(key []byte, value []byte, lsn constants.LsnType, entryType constants.EntryType) []byte {
 	memSkiplist.skiplist.Put(key, value, lsn, constants.PutEntry)
 	return nil
+}
+
+func (memSkiplist *MemSkiplist) NewIterator(lsnSnapshot constants.LsnType) iterator.Iterator {
+	return memSkiplist.skiplist.NewSkiplistIterator(lsnSnapshot)
 }
 
 func (MemSkiplist *MemSkiplist) Size() int {
