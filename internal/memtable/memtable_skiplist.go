@@ -13,7 +13,7 @@ type MemSkiplist struct {
 
 func NewMemSkiplist() *MemSkiplist {
 	return &MemSkiplist{
-		baseMemtable: &BaseMemtable{status: MUTABLE},
+		baseMemtable: NewBaseMemtable(),
 		skiplist:     skiplist.NewSkiplist(0.5, 12)}
 }
 
@@ -30,6 +30,22 @@ func (memSkiplist *MemSkiplist) NewIterator(lsnSnapshot constants.LsnType) itera
 	return memSkiplist.skiplist.NewSkiplistIterator(lsnSnapshot)
 }
 
+func (memSkiplist *MemSkiplist) RegisterReader() {
+
+}
+
 func (MemSkiplist *MemSkiplist) Size() int {
 	return MemSkiplist.skiplist.Size()
+}
+
+func (memSkiplist *MemSkiplist) IncrActiveWriter() {
+	memSkiplist.baseMemtable.activeWriters.Add(1)
+}
+
+func (memSkiplist *MemSkiplist) DecrActiveWriter() {
+	memSkiplist.baseMemtable.activeWriters.Add(-1)
+}
+
+func (memSkiplist *MemSkiplist) UpdateToFlushPending() {
+	memSkiplist.baseMemtable.status = FLUSHPENDING
 }
