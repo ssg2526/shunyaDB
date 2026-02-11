@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/binary"
+	"sync"
 
 	"github.com/ssg2526/shunya/config"
 	constants "github.com/ssg2526/shunya/internal/constants"
@@ -10,8 +11,10 @@ import (
 )
 
 type Storage struct {
-	mtQ []memtable.Memtable
-	wal *wal.WAL
+	mu        sync.Mutex
+	mtQ       []memtable.Memtable
+	activeMem memtable.Memtable
+	wal       *wal.WAL
 }
 
 const (
@@ -33,13 +36,14 @@ func InitStorage() *Storage {
 	}
 
 	storage := &Storage{
-		mtQ: []memtable.Memtable{memtableObj},
-		wal: wal.InitWal(),
+		mtQ:       []memtable.Memtable{memtableObj},
+		activeMem: memtableObj,
+		wal:       wal.InitWal(),
 	}
 	return storage
 }
 
-func (storage *Storage) addMemTable() {
+func (storage *Storage) addMemTable() memtable.Memtable {
 	var memtableObj memtable.Memtable
 
 	switch config.ShunyaConfigs.MemTableType {
@@ -49,6 +53,7 @@ func (storage *Storage) addMemTable() {
 		memtableObj = memtable.NewMemtable(memtable.SKIPLIST)
 	}
 	storage.mtQ = append(storage.mtQ, memtableObj)
+	return memtableObj
 }
 
 func (storage *Storage) Get(key []byte, lsn constants.LsnType) string {
@@ -58,16 +63,26 @@ func (storage *Storage) Get(key []byte, lsn constants.LsnType) string {
 }
 
 func (storage *Storage) Put(key []byte, value []byte, lsn constants.LsnType) string {
-	if storage.mtQ[0].Size() > MEM_TABLE_FLUSH_SIZE {
-		storage.addMemTable()
-		storage.mtQ[0].UpdateToFlushPending()
+	storage.mu.Lock()
+	if storage.activeMem.Size() > MEM_TABLE_FLUSH_SIZE {
+		storage.activeMem.Freeze()
+		storage.activeMem = storage.addMemTable()
 	}
-	storage.mtQ[0].Put(key, value, lsn, constants.PutEntry)
+	targetMem := storage.activeMem
+	storage.mu.Unlock()
+	targetMem.Put(key, value, lsn, constants.PutEntry)
 	return "OK"
 }
 
 func (storage *Storage) Del(key []byte, lsn constants.LsnType) string {
-	storage.mtQ[0].Put(key, nil, lsn, constants.DelEntry)
+	storage.mu.Lock()
+	if storage.activeMem.Size() > MEM_TABLE_FLUSH_SIZE {
+		storage.activeMem.Freeze()
+		storage.activeMem = storage.addMemTable()
+	}
+	targetMem := storage.activeMem
+	storage.mu.Unlock()
+	targetMem.Put(key, nil, lsn, constants.PutEntry)
 	return "OK"
 }
 

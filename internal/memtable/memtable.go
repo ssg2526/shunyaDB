@@ -13,10 +13,7 @@ type Memtable interface {
 	Put(key []byte, value []byte, lsn constants.LsnType, entryType constants.EntryType) []byte
 	NewIterator(snapshotLSN constants.LsnType) iterator.Iterator
 	Size() int
-	UpdateToFlushPending()
-	// UpdateToFlushing()
-	IncrActiveWriter()
-	DecrActiveWriter()
+	Freeze()
 }
 
 type MemTableType uint8
@@ -24,7 +21,7 @@ type MemTableStatus uint8
 
 const (
 	MUTABLE MemTableStatus = iota
-	FLUSHPENDING
+	IMMUTABLE
 	FLUSHING
 )
 
@@ -74,6 +71,14 @@ func (readerTracker *ReaderTracker) DeregisterReader(lsn constants.LsnType) {
 			readerTracker.calculateNewMinLsn()
 		}
 	}
+}
+
+func (baseMemtable *BaseMemtable) IncrActiveWriter() {
+	baseMemtable.activeWriters.Add(1)
+}
+
+func (baseMemtable *BaseMemtable) DecrActiveWriter() {
+	baseMemtable.activeWriters.Add(-1)
 }
 
 func (readerTracker *ReaderTracker) calculateNewMinLsn() {

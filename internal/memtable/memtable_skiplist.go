@@ -30,22 +30,26 @@ func (memSkiplist *MemSkiplist) NewIterator(lsnSnapshot constants.LsnType) itera
 	return memSkiplist.skiplist.NewSkiplistIterator(lsnSnapshot)
 }
 
-func (memSkiplist *MemSkiplist) RegisterReader() {
+func (memSkiplist *MemSkiplist) RegisterReader(lsn constants.LsnType) {
+	memSkiplist.baseMemtable.RegisterReader(lsn)
+}
 
+func (memSkiplist *MemSkiplist) DeregisterReader(lsn constants.LsnType) {
+	memSkiplist.baseMemtable.activeReaders.DeregisterReader(lsn)
 }
 
 func (MemSkiplist *MemSkiplist) Size() int {
 	return MemSkiplist.skiplist.Size()
 }
 
+func (memSkiplist *MemSkiplist) Freeze() {
+	memSkiplist.baseMemtable.status = IMMUTABLE
+}
+
 func (memSkiplist *MemSkiplist) IncrActiveWriter() {
-	memSkiplist.baseMemtable.activeWriters.Add(1)
+	memSkiplist.baseMemtable.IncrActiveWriter()
 }
 
 func (memSkiplist *MemSkiplist) DecrActiveWriter() {
-	memSkiplist.baseMemtable.activeWriters.Add(-1)
-}
-
-func (memSkiplist *MemSkiplist) UpdateToFlushPending() {
-	memSkiplist.baseMemtable.status = FLUSHPENDING
+	memSkiplist.baseMemtable.DecrActiveWriter()
 }
