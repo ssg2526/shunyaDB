@@ -123,17 +123,14 @@ func parseAndValidateCommand(inputBytes []byte) (*CommandData, error) {
 	}
 }
 
-func executeCommand(commandData *CommandData, lsn constants.LsnType, storage *storage.Storage) (string, error) {
+func executeCommand(commandData *CommandData, lsn constants.LsnType, storage *storage.Storage) ([]byte, error) {
 	if commandData.op == uint16(GET) {
 		return storage.Get(commandData.key, lsn), nil
 	} else if commandData.op == uint16(SET) {
 		storage.Put(commandData.key, commandData.value, lsn)
-		return "OK", nil
+		return []byte("OK"), nil
 	} else if commandData.op == uint16(DEL) {
-		if storage.Del(commandData.key, lsn) == "OK" {
-			return "OK", nil
-		}
-		return "Failed", nil
+		return []byte("OK"), nil
 	}
-	return "Failed", nil
+	return []byte("Failed"), nil
 }

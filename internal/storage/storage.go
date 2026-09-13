@@ -56,34 +56,48 @@ func (storage *Storage) addMemTable() memtable.Memtable {
 	return memtableObj
 }
 
-func (storage *Storage) Get(key []byte, lsn constants.LsnType) string {
+func (storage *Storage) Get(key []byte, lsn constants.LsnType) []byte {
 	//TODO: check in mutable mem first then check in immutable mem and if not present move to sstables
-	storage.mtQ[0].Get(key, lsn)
-	return ""
+	data := storage.activeMem.Get(key, lsn)
+	if data != nil {
+		return data
+	}
+	if data == nil {
+		for i := 0; i < len(storage.mtQ); i++ {
+			if storage.mtQ[i] != storage.activeMem {
+				data = storage.mtQ[i].Get(key, lsn)
+				if data != nil {
+					return data
+				}
+			}
+		}
+	}
+
+	return []byte("")
 }
 
-func (storage *Storage) Put(key []byte, value []byte, lsn constants.LsnType) string {
+func (storage *Storage) Put(key []byte, value []byte, lsn constants.LsnType) []byte {
 	storage.mu.Lock()
+	defer storage.mu.Unlock()
 	if storage.activeMem.Size() > MEM_TABLE_FLUSH_SIZE {
 		storage.activeMem.Freeze()
 		storage.activeMem = storage.addMemTable()
 	}
 	targetMem := storage.activeMem
-	storage.mu.Unlock()
 	targetMem.Put(key, value, lsn, constants.PutEntry)
-	return "OK"
+	return []byte("OK")
 }
 
-func (storage *Storage) Del(key []byte, lsn constants.LsnType) string {
+func (storage *Storage) Del(key []byte, lsn constants.LsnType) []byte {
 	storage.mu.Lock()
+	defer storage.mu.Unlock()
 	if storage.activeMem.Size() > MEM_TABLE_FLUSH_SIZE {
 		storage.activeMem.Freeze()
 		storage.activeMem = storage.addMemTable()
 	}
 	targetMem := storage.activeMem
-	storage.mu.Unlock()
 	targetMem.Put(key, nil, lsn, constants.PutEntry)
-	return "OK"
+	return []byte("OK")
 }
 
 func (storage *Storage) Range(key []byte, limit int, lsnSnapshot constants.LsnType) [][]byte {
