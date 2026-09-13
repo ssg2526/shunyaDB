@@ -14,14 +14,14 @@ import (
 type SSTable struct {
 	sstFile      *os.File
 	bufWriter    *bufio.Writer
-	headerOffset int
-	footerOffset int
-	dataOffset   int
+	headerOffset uint32
+	footerOffset uint32
+	dataOffset   uint32
 }
 
 type SSTBlock struct {
-	blockLen   int
-	entryCount int
+	blockLen   uint32
+	entryCount uint32
 	entries    []*SSTBlockEntry
 	checksum   uint64
 }
@@ -33,8 +33,8 @@ type SSTBlockEntry struct {
 }
 
 type SSTFooter struct {
-	indexOffset int
-	indexLen    int
+	indexOffset uint32
+	indexLen    uint32
 	version     uint16
 	magic       [8]byte
 }
@@ -61,13 +61,18 @@ func OpenSSTable() *SSTable {
 	return sstable
 }
 
-func (sstable *SSTable) Flush(memtable memtable.Memtable, fileName string) {
-	// sstFile, err := os.OpenFile(path.Join(config.ShunyaConfigs.SSTableDir, fileName), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	// if err != nil {
-	// 	fmt.Println("open new sstable file err", err)
-	// }
-	// sstable.bufWriter.Write()
-	//TODO: implement
+func (sstable *SSTable) Flush(memtable memtable.Memtable) {
+
+	it := memtable.NewVersionedIterator()
+
+	for it.Valid() {
+		//TODO: implement
+		// versions := it.Versions()
+
+		it.Next()
+	}
+
+	sstable.bufWriter.Write([]byte("ok"))
 
 }
 

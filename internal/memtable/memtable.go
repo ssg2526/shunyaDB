@@ -12,6 +12,7 @@ type Memtable interface {
 	Get(key []byte, lsn constants.LsnType) []byte
 	Put(key []byte, value []byte, lsn constants.LsnType, entryType constants.EntryType) []byte
 	NewIterator(snapshotLSN constants.LsnType) iterator.Iterator
+	NewVersionedIterator() iterator.VersionedIterator
 	Size() int
 	Freeze()
 }
