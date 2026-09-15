@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"sync"
+	"time"
 
 	"github.com/ssg2526/shunya/config"
 	constants "github.com/ssg2526/shunya/internal/constants"
@@ -11,11 +13,14 @@ import (
 )
 
 type Storage struct {
-	mu         sync.Mutex
-	mtQ        []memtable.Memtable
-	activeMem  memtable.Memtable
-	flushQueue chan memtable.Memtable
-	wal        *wal.WAL
+	mu              sync.Mutex
+	mtQ             []memtable.Memtable
+	activeMem       memtable.Memtable
+	flushQueue      chan memtable.Memtable
+	idleFlushTicker *time.Ticker
+	wal             *wal.WAL
+	ctx             context.Context
+	cancel          context.CancelFunc
 }
 
 const (
@@ -35,13 +40,20 @@ func InitStorage() *Storage {
 	default:
 		memtableObj = memtable.NewMemtable(memtable.SKIPLIST)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 
 	storage := &Storage{
-		mtQ:        []memtable.Memtable{memtableObj},
-		activeMem:  memtableObj,
-		flushQueue: make(chan memtable.Memtable, config.ShunyaConfigs.FlushQueueSize),
-		wal:        wal.InitWal(),
+		mtQ:             []memtable.Memtable{memtableObj},
+		activeMem:       memtableObj,
+		flushQueue:      make(chan memtable.Memtable, config.ShunyaConfigs.FlushQueueSize),
+		idleFlushTicker: time.NewTicker(time.Duration(config.ShunyaConfigs.IdleFlushIntervalMillis) * time.Millisecond),
+		wal:             wal.InitWal(),
+		ctx:             ctx,
+		cancel:          cancel,
 	}
+	storage.StartFlushLoop()
+	go storage.StartIdleFlushWorker(time.Duration(config.ShunyaConfigs.IdleFlushIntervalMillis) * time.Millisecond)
+
 	return storage
 }
 
@@ -81,14 +93,16 @@ func (storage *Storage) Get(key []byte, lsn constants.LsnType) []byte {
 // TODO: need to implememt soft throttling and hard throttling
 func (storage *Storage) Put(key []byte, value []byte, lsn constants.LsnType) []byte {
 	storage.mu.Lock()
-	defer storage.mu.Unlock()
 	if storage.activeMem.Size() > MEM_TABLE_FLUSH_SIZE {
 		storage.activeMem.Freeze()
 		memToflush := storage.activeMem
 		storage.activeMem = storage.addMemTable()
-		// TODO: fix this, for correctness as well
+		storage.mu.Unlock()
+		//TODO: understand the channel behaviour as well and why this locking is better.
 		storage.flushQueue <- memToflush
+		storage.mu.Lock()
 	}
+	defer storage.mu.Unlock()
 	targetMem := storage.activeMem
 	targetMem.Put(key, value, lsn, constants.PutEntry)
 	return []byte("OK")
@@ -96,13 +110,17 @@ func (storage *Storage) Put(key []byte, value []byte, lsn constants.LsnType) []b
 
 func (storage *Storage) Del(key []byte, lsn constants.LsnType) []byte {
 	storage.mu.Lock()
-	defer storage.mu.Unlock()
 	if storage.activeMem.Size() > MEM_TABLE_FLUSH_SIZE {
 		storage.activeMem.Freeze()
+		memToflush := storage.activeMem
 		storage.activeMem = storage.addMemTable()
+		storage.mu.Unlock()
+		storage.flushQueue <- memToflush
+		storage.mu.Lock()
 	}
+	defer storage.mu.Unlock()
 	targetMem := storage.activeMem
-	targetMem.Put(key, nil, lsn, constants.PutEntry)
+	targetMem.Put(key, nil, lsn, constants.DelEntry)
 	return []byte("OK")
 }
 

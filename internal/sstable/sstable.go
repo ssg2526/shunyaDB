@@ -61,6 +61,7 @@ type SSTIndexEntry struct {
 	lsn         constants.LsnType // lsn of the block's first entry, for the same reason
 }
 
+// TODO: use real file name
 func OpenSSTable() *SSTable {
 	sstFile, err := os.OpenFile(path.Join(config.ShunyaConfigs.SSTableDir, "sstable1"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {

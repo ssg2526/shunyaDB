@@ -10,3 +10,4 @@ sst_dir: "./data/sstables/"
 sst_write_buffer_size: 65536
 mem_table_type: "skiplist"
 max_flush_queue_size: 10
+idle_flush_interval_millis: 1800000

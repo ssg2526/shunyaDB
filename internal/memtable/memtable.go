@@ -3,6 +3,7 @@ package memtable
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 
 	constants "github.com/ssg2526/shunya/internal/constants"
 	"github.com/ssg2526/shunya/internal/iterator"
@@ -15,6 +16,7 @@ type Memtable interface {
 	NewVersionedIterator() iterator.VersionedIterator
 	Size() int
 	Freeze()
+	GetCreationTime() time.Time
 }
 
 type MemTableType uint8
@@ -34,6 +36,7 @@ type BaseMemtable struct {
 	status        MemTableStatus
 	activeWriters atomic.Int32
 	activeReaders *ReaderTracker
+	createdAt     time.Time
 }
 
 type ReaderTracker struct {
@@ -49,6 +52,7 @@ func NewBaseMemtable() *BaseMemtable {
 			lsnReaders: make(map[constants.LsnType]int),
 			minLsn:     ^constants.LsnType(0),
 		},
+		createdAt: time.Now(),
 	}
 }
 

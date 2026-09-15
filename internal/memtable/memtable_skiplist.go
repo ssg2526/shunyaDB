@@ -1,6 +1,8 @@
 package memtable
 
 import (
+	"time"
+
 	constants "github.com/ssg2526/shunya/internal/constants"
 	"github.com/ssg2526/shunya/internal/ds/skiplist"
 	"github.com/ssg2526/shunya/internal/iterator"
@@ -24,7 +26,7 @@ func (memSkiplist *MemSkiplist) Get(key []byte, lsn constants.LsnType) []byte {
 }
 
 func (memSkiplist *MemSkiplist) Put(key []byte, value []byte, lsn constants.LsnType, entryType constants.EntryType) []byte {
-	memSkiplist.skiplist.Put(key, value, lsn, constants.PutEntry)
+	memSkiplist.skiplist.Put(key, value, lsn, entryType)
 	return nil
 }
 
@@ -50,6 +52,10 @@ func (MemSkiplist *MemSkiplist) Size() int {
 
 func (memSkiplist *MemSkiplist) Freeze() {
 	memSkiplist.baseMemtable.status = IMMUTABLE
+}
+
+func (memSkiplist *MemSkiplist) GetCreationTime() time.Time {
+	return memSkiplist.baseMemtable.createdAt
 }
 
 func (memSkiplist *MemSkiplist) IncrActiveWriter() {

@@ -130,6 +130,7 @@ func executeCommand(commandData *CommandData, lsn constants.LsnType, storage *st
 		storage.Put(commandData.key, commandData.value, lsn)
 		return []byte("OK"), nil
 	} else if commandData.op == uint16(DEL) {
+		storage.Del(commandData.key, lsn)
 		return []byte("OK"), nil
 	}
 	return []byte("Failed"), nil

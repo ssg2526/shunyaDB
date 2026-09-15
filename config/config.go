@@ -19,6 +19,7 @@ type ShunyaDBConfig struct {
 	SSTableDir               string `mapstructure:"sst_dir"`
 	SSTWriteBufferSize       int    `mapstructure:"sst_write_buffer_size"`
 	FlushQueueSize           int    `mapstructure:"max_flush_queue_size"`
+	IdleFlushIntervalMillis  int    `mapstructure:"idle_flush_interval_millis"`
 }
 
 func InitConfig() {
