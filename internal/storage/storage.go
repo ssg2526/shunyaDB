@@ -11,10 +11,11 @@ import (
 )
 
 type Storage struct {
-	mu        sync.Mutex
-	mtQ       []memtable.Memtable
-	activeMem memtable.Memtable
-	wal       *wal.WAL
+	mu         sync.Mutex
+	mtQ        []memtable.Memtable
+	activeMem  memtable.Memtable
+	flushQueue chan memtable.Memtable
+	wal        *wal.WAL
 }
 
 const (
@@ -36,9 +37,10 @@ func InitStorage() *Storage {
 	}
 
 	storage := &Storage{
-		mtQ:       []memtable.Memtable{memtableObj},
-		activeMem: memtableObj,
-		wal:       wal.InitWal(),
+		mtQ:        []memtable.Memtable{memtableObj},
+		activeMem:  memtableObj,
+		flushQueue: make(chan memtable.Memtable, config.ShunyaConfigs.FlushQueueSize),
+		wal:        wal.InitWal(),
 	}
 	return storage
 }
@@ -76,12 +78,16 @@ func (storage *Storage) Get(key []byte, lsn constants.LsnType) []byte {
 	return []byte("")
 }
 
+// TODO: need to implememt soft throttling and hard throttling
 func (storage *Storage) Put(key []byte, value []byte, lsn constants.LsnType) []byte {
 	storage.mu.Lock()
 	defer storage.mu.Unlock()
 	if storage.activeMem.Size() > MEM_TABLE_FLUSH_SIZE {
 		storage.activeMem.Freeze()
+		memToflush := storage.activeMem
 		storage.activeMem = storage.addMemTable()
+		// TODO: fix this, for correctness as well
+		storage.flushQueue <- memToflush
 	}
 	targetMem := storage.activeMem
 	targetMem.Put(key, value, lsn, constants.PutEntry)

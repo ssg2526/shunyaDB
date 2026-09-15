@@ -11,6 +11,10 @@ import (
 	"github.com/ssg2526/shunya/internal/memtable"
 )
 
+const (
+	VERSION = uint16(1)
+)
+
 type SSTable struct {
 	sstFile      *os.File
 	bufWriter    *bufio.Writer
@@ -22,14 +26,19 @@ type SSTable struct {
 type SSTBlock struct {
 	blockLen   uint32
 	entryCount uint32
-	entries    []*SSTBlockEntry
+	entries    []SSTBlockEntry
 	checksum   uint64
 }
 
 type SSTBlockEntry struct {
-	lsn   constants.LsnType
-	key   []byte
-	value []byte
+	internalKey SSTableInternalKey
+	value       []byte
+}
+
+type SSTableInternalKey struct {
+	key       []byte
+	lsn       constants.LsnType
+	entryType constants.EntryType
 }
 
 type SSTFooter struct {
@@ -40,12 +49,16 @@ type SSTFooter struct {
 }
 
 type SSTIndex struct {
-	keyLen    int
-	keyOffset int
-	key       []byte //this is start key of the block
+	indexEntries []SSTIndexEntry
+	indexLen     uint32
+	checksum     uint64
 }
 
-type SSTHeader struct {
+type SSTIndexEntry struct {
+	blockLen    uint32
+	blockOffset uint32
+	key         []byte            // composite key: user key of the block's first entry
+	lsn         constants.LsnType // lsn of the block's first entry, for the same reason
 }
 
 func OpenSSTable() *SSTable {
@@ -63,23 +76,80 @@ func OpenSSTable() *SSTable {
 
 func (sstable *SSTable) Flush(memtable memtable.Memtable) {
 
+	blockEntries := make([]SSTBlockEntry, 0)
+	indexEntries := make([]SSTIndexEntry, 0)
 	it := memtable.NewVersionedIterator()
-
+	blockSize := 0
+	offset := uint32(0)
 	for it.Valid() {
-		//TODO: implement
-		// versions := it.Versions()
+		versions := it.Versions()
+		for _, version := range versions {
+			sstBlockEntry := SSTBlockEntry{
+				internalKey: SSTableInternalKey{key: it.Key(), lsn: version.Lsn, entryType: version.EntryType},
+				value:       version.Value,
+			}
+			blockEntries = append(blockEntries, sstBlockEntry)
+			blockSize += KEY_VAL_LEN_SIZE + len(it.Key()) + LSN_SIZE + ENTRY_TYPE_SIZE + len(version.Value)
+			if blockSize >= SSTABLE_BLOCK_SIZE_BYTES {
+				sstBlock := &SSTBlock{
+					entryCount: uint32(len(blockEntries)),
+					entries:    blockEntries,
+				}
+				marshalledData := MarshalSSTDataBlock(sstBlock)
+				sstable.bufWriter.Write(marshalledData)
 
+				indexEntry := SSTIndexEntry{
+					blockLen:    sstBlock.blockLen,
+					blockOffset: offset,
+					key:         sstBlock.entries[0].internalKey.key,
+					lsn:         sstBlock.entries[0].internalKey.lsn,
+				}
+				offset += sstBlock.blockLen
+				indexEntries = append(indexEntries, indexEntry)
+
+				blockSize = 0
+				blockEntries = make([]SSTBlockEntry, 0)
+			}
+		}
 		it.Next()
 	}
+	if blockSize > 0 {
+		sstBlock := &SSTBlock{
+			entryCount: uint32(len(blockEntries)),
+			entries:    blockEntries,
+		}
+		marshalledData := MarshalSSTDataBlock(sstBlock)
+		sstable.bufWriter.Write(marshalledData)
 
-	sstable.bufWriter.Write([]byte("ok"))
+		indexEntry := SSTIndexEntry{
+			blockLen:    sstBlock.blockLen,
+			blockOffset: offset,
+			key:         sstBlock.entries[0].internalKey.key,
+			lsn:         sstBlock.entries[0].internalKey.lsn,
+		}
+		offset += sstBlock.blockLen
+		indexEntries = append(indexEntries, indexEntry)
+	}
+	sstIndex := &SSTIndex{
+		indexEntries: indexEntries,
+	}
+	marshalledIndexData := MarshalSSTIndex(sstIndex)
+	sstable.bufWriter.Write(marshalledIndexData)
 
-}
-
-func (sstable *SSTable) ReadHeader() {
-
+	sstFooter := &SSTFooter{
+		indexOffset: offset,
+		indexLen:    sstIndex.indexLen,
+		version:     VERSION,
+	}
+	marshalledFooterData := MarshalSSTFooter(sstFooter)
+	sstable.bufWriter.Write(marshalledFooterData)
+	sstable.bufWriter.Flush()
 }
 
 func (sstable *SSTable) ReadFooter() {
+
+}
+
+func (sstable *SSTable) ReadIndex() {
 
 }
