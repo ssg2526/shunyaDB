@@ -63,7 +63,7 @@ type SSTIndexEntry struct {
 
 // TODO: use real file name
 func OpenSSTable() *SSTable {
-	sstFile, err := os.OpenFile(path.Join(config.ShunyaConfigs.SSTableDir, "sstable1"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	sstFile, err := os.OpenFile(path.Join(config.ShunyaConfigs.DataDir, "sstable1"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Println("open new sstable file err", err)
 	}
