@@ -45,11 +45,44 @@ func UnmarshalWalEntry(byteDataWalEntry []byte) *WAL_Entry {
 		timestamp: int64(binary.LittleEndian.Uint64(byteDataWalEntry[8:16])),
 		checksum:  binary.LittleEndian.Uint64(byteDataWalEntry[16:24]),
 		length:    dataLength,
-		data:      byteDataWalEntry[totalHeaderSize:dataLength],
+		data:      byteDataWalEntry[totalHeaderSize : totalHeaderSize+int(dataLength)],
 	}
 }
 
-func getCurrSegment(logDir string) (*os.File, int, uint64) {
+// readNextWalEntry reads one WAL entry sequentially from file, starting at
+// its current offset. It returns (nil, nil) on a clean EOF or a torn/short
+// trailing entry (the only place that's expected to happen is at the very
+// end of the most recently written segment), so callers should treat a nil
+// entry as "stop reading this segment," not as an error.
+func readNextWalEntry(file *os.File) (*WAL_Entry, error) {
+	header := make([]byte, totalHeaderSize)
+	if _, err := io.ReadFull(file, header); err != nil {
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	dataLength := binary.LittleEndian.Uint32(header[24:totalHeaderSize])
+	full := make([]byte, totalHeaderSize+int(dataLength))
+	copy(full, header)
+	if _, err := io.ReadFull(file, full[totalHeaderSize:]); err != nil {
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	walEntry := UnmarshalWalEntry(full)
+	if checksum(walEntry.data) != walEntry.checksum {
+		// corrupt/torn entry - stop reading this segment here, same as EOF
+		return nil, nil
+	}
+
+	return walEntry, nil
+}
+
+func getCurrSegment(logDir string) (*os.File, uint64) {
 	_, err := os.Stat(logDir)
 
 	if os.IsNotExist(err) {
@@ -70,7 +103,7 @@ func getCurrSegment(logDir string) (*os.File, int, uint64) {
 		if err != nil {
 			fmt.Println(err)
 		}
-		return file, 0, 0
+		return file, 0
 	}
 
 	filenames := make([]string, len(dirEntries))
@@ -87,10 +120,9 @@ func getCurrSegment(logDir string) (*os.File, int, uint64) {
 	if err != nil {
 		fmt.Println(err)
 	}
-	currentSegmentIndex := getSegmentIndexFromFileName(lastFileName)
 	lastLSN := getLastLogSequenceNumber(file)
 
-	return file, currentSegmentIndex, lastLSN
+	return file, lastLSN
 }
 
 func getSegmentIndexFromFileName(filename string) int {
@@ -99,6 +131,12 @@ func getSegmentIndexFromFileName(filename string) int {
 		panic(err)
 	}
 	return currentSegmentIndex
+}
+
+// parseSegmentStartLsn extracts the starting LSN encoded in a segment's
+// filename (wal-<016d starting LSN>.log), as set by getNewSegmentName.
+func parseSegmentStartLsn(filename string) (uint64, error) {
+	return strconv.ParseUint(filename[len(segmentPrefix):len(segmentPrefix)+16], 10, 64)
 }
 
 func getLastLogSequenceNumber(file *os.File) uint64 {
@@ -127,8 +165,8 @@ func getLastLogSequenceNumber(file *os.File) uint64 {
 	return lsn
 }
 
-func getNewSegmentName(currSegmentIndex int) string {
-	return segmentPrefix + fmt.Sprintf("%016d", currSegmentIndex) + segmentSuffix
+func getNewSegmentName(currLsn uint64) string {
+	return segmentPrefix + fmt.Sprintf("%016d", currLsn) + segmentSuffix
 }
 
 func checksum(data []byte) uint64 {

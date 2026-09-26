@@ -59,6 +59,20 @@ func InitStorage() *Storage {
 	return storage
 }
 
+func (storage *Storage) RestoreData() error {
+	manifestState := storage.manifest.ReplayManifestFile()
+
+	return storage.wal.ReplayWal(manifestState.MaxLsn, func(lsn constants.LsnType, data []byte) error {
+		op, key, value := DecodeWalCommand(data)
+		if op == constants.DelEntry {
+			storage.Del(key, lsn)
+		} else {
+			storage.Put(key, value, lsn)
+		}
+		return nil
+	})
+}
+
 func (storage *Storage) addMemTable() memtable.Memtable {
 	var memtableObj memtable.Memtable
 
@@ -78,13 +92,11 @@ func (storage *Storage) Get(key []byte, lsn constants.LsnType) []byte {
 	if data != nil {
 		return data
 	}
-	if data == nil {
-		for i := 0; i < len(storage.mtQ); i++ {
-			if storage.mtQ[i] != storage.activeMem {
-				data = storage.mtQ[i].Get(key, lsn)
-				if data != nil {
-					return data
-				}
+	for i := 0; i < len(storage.mtQ); i++ {
+		if storage.mtQ[i] != storage.activeMem {
+			data = storage.mtQ[i].Get(key, lsn)
+			if data != nil {
+				return data
 			}
 		}
 	}

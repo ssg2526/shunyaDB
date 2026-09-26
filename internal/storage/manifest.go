@@ -48,6 +48,14 @@ type ManifestOp struct {
 	maxLsn     constants.LsnType
 }
 
+type SSTableMeta struct {
+}
+
+type ManifestState struct {
+	SSTByMeta [][]SSTableMeta
+	MaxLsn    constants.LsnType
+}
+
 type ManifestEntry struct {
 	manifestOps []ManifestOp
 }
@@ -177,6 +185,7 @@ func (manifest *Manifest) UnMarshalManifestEntry(marshalEntryBytes []byte) (mani
 }
 
 func (manifest *Manifest) AppendToManifest(manifestEntry *ManifestEntry) error {
+	//TODO: handle concurrency
 	manifestEntryBytes := manifest.MarshalManifestEntry(manifestEntry)
 	if _, err := manifest.bufWriter.Write(manifestEntryBytes); err != nil {
 		return err
@@ -187,9 +196,9 @@ func (manifest *Manifest) AppendToManifest(manifestEntry *ManifestEntry) error {
 	return nil
 }
 
-func (manifest *Manifest) ReplayManifestFile() (manifestEntries []ManifestEntry) {
+func (manifest *Manifest) ReplayManifestFile() (manifestState ManifestState) {
 	GetCurrentManifest(config.ShunyaConfigs.ManifestDir)
-	return nil
+	return ManifestState{}
 }
 
 func GetCurrentManifest(manifestDir string) (*os.File, uint64, int) {

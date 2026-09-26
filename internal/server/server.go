@@ -29,6 +29,11 @@ type CommandData struct {
 func Start() {
 	config.InitConfig()
 	storageEngine := storage.InitStorage()
+	err := storageEngine.RestoreData()
+	if err != nil {
+		fmt.Println("error while restoring data")
+		panic("couldn't restore data")
+	}
 	ln, err := net.Listen("tcp", ":4242")
 	if err != nil {
 		fmt.Println("error while starting the Shunya server")
@@ -45,7 +50,7 @@ func Start() {
 	}
 }
 
-func handleConnection(conn net.Conn, storage *storage.Storage) {
+func handleConnection(conn net.Conn, storageEngine *storage.Storage) {
 	defer conn.Close()
 
 	buff := make([]byte, 1024)
@@ -63,10 +68,14 @@ func handleConnection(conn net.Conn, storage *storage.Storage) {
 		}
 		var lsn constants.LsnType
 		if commandData.op != uint16(GET) {
-			lsn = storage.AppendToWal(buff[:bytesRed])
+			entryType := constants.PutEntry
+			if commandData.op == uint16(DEL) {
+				entryType = constants.DelEntry
+			}
+			lsn = storageEngine.AppendToWal(storage.EncodeWalCommand(entryType, commandData.key, commandData.value))
 		}
 
-		returnVal, _ := executeCommand(commandData, lsn, storage)
+		returnVal, _ := executeCommand(commandData, lsn, storageEngine)
 		_, errWrite := conn.Write([]byte(returnVal))
 		if errWrite != nil {
 			fmt.Print("error while sending ack")

@@ -7,13 +7,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	constants "github.com/ssg2526/shunya/internal/constants"
-
 	"github.com/ssg2526/shunya/config"
+	constants "github.com/ssg2526/shunya/internal/constants"
 )
 
 const (
@@ -25,7 +25,6 @@ type WAL struct {
 	logDir            string
 	currSegment       *os.File
 	bufWriter         *bufio.Writer
-	currSegmentIndex  int
 	currSegmentOffset int
 	writeBufSize      int
 	shouldFsync       bool
@@ -47,8 +46,8 @@ type WAL_Entry struct {
 
 func InitWal() *WAL {
 	fmt.Println(config.ShunyaConfigs.WALDir)
-	currSegmentFile, currSegmentIndex, lastLSN := getCurrSegment(config.ShunyaConfigs.WALDir)
-	fmt.Printf("currseg, segInd, lastLsn = %v,%v,%v\n", currSegmentFile, currSegmentIndex, lastLSN)
+	currSegmentFile, lastLSN := getCurrSegment(config.ShunyaConfigs.WALDir)
+	fmt.Printf("currseg, lastLsn = %v,%v\n", currSegmentFile, lastLSN)
 	bufWriter := bufio.NewWriterSize(currSegmentFile, config.ShunyaConfigs.WALWriteBufferSize)
 	currSegmentOffset, err := currSegmentFile.Seek(0, io.SeekEnd)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -62,7 +61,6 @@ func InitWal() *WAL {
 		bufSyncTicker:     time.NewTicker(time.Duration(config.ShunyaConfigs.WALBufSyncIntervalMillis) * time.Millisecond),
 		maxSegmentSize:    config.ShunyaConfigs.WALMaxSegmentSize,
 		currSegment:       currSegmentFile,
-		currSegmentIndex:  currSegmentIndex,
 		currSegmentOffset: int(currSegmentOffset),
 		bufWriter:         bufWriter,
 		writeBufSize:      config.ShunyaConfigs.WALWriteBufferSize,
@@ -90,7 +88,7 @@ func (wal *WAL) AppendToWal(commandData []byte) constants.LsnType {
 	wal.mu.Lock()
 	defer wal.mu.Unlock()
 
-	wal.rotateWalSegmentIfRequired(walEntryByteLength)
+	wal.rotateWalSegmentIfRequired(walEntryByteLength, newLsn)
 	if _, err := wal.bufWriter.Write(byteDataWalEntry); err != nil {
 		if err != nil {
 			// fmt.Println(err)
@@ -101,17 +99,72 @@ func (wal *WAL) AppendToWal(commandData []byte) constants.LsnType {
 	return constants.LsnType(newLsn)
 }
 
-func (wal *WAL) ReplayWal() {
-	//TODO:
+func (wal *WAL) ReplayWal(sinceLsn constants.LsnType, apply func(lsn constants.LsnType, data []byte) error) error {
+	dirEntries, err := os.ReadDir(wal.logDir)
+	if err != nil {
+		return err
+	}
+
+	var filenames []string
+	for _, entry := range dirEntries {
+		name := entry.Name()
+		if strings.HasPrefix(name, segmentPrefix) && strings.HasSuffix(name, segmentSuffix) {
+			filenames = append(filenames, name)
+		}
+	}
+
+	startIdx := 0
+	for i, filename := range filenames {
+		startLsn, err := parseSegmentStartLsn(filename)
+		if err != nil {
+			return err
+		}
+		if constants.LsnType(startLsn) <= sinceLsn {
+			startIdx = i
+		} else {
+			break
+		}
+	}
+
+	for _, filename := range filenames[startIdx:] {
+		if err := wal.replaySegment(filepath.Join(wal.logDir, filename), sinceLsn, apply); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func (wal *WAL) rotateWalSegmentIfRequired(size int) {
-	if wal.maxSegmentSize-wal.currSegmentOffset < size {
-		wal.rotateWalSegment()
+func (wal *WAL) replaySegment(path string, sinceLsn constants.LsnType, apply func(lsn constants.LsnType, data []byte) error) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	for {
+		walEntry, err := readNextWalEntry(file)
+		if err != nil {
+			return err
+		}
+		if walEntry == nil {
+			return nil
+		}
+
+		if constants.LsnType(walEntry.lsn) > sinceLsn {
+			if err := apply(constants.LsnType(walEntry.lsn), walEntry.data); err != nil {
+				return err
+			}
+		}
 	}
 }
 
-func (wal *WAL) rotateWalSegment() {
+func (wal *WAL) rotateWalSegmentIfRequired(size int, newLsn uint64) {
+	if wal.maxSegmentSize-wal.currSegmentOffset < size {
+		wal.rotateWalSegment(newLsn)
+	}
+}
+
+func (wal *WAL) rotateWalSegment(newLsn uint64) {
 	if wal.bufWriter != nil {
 		if err := wal.bufWriter.Flush(); err != nil {
 			fmt.Println("flush error:", err)
@@ -124,8 +177,7 @@ func (wal *WAL) rotateWalSegment() {
 		}
 	}
 
-	newSegmentIndex := wal.currSegmentIndex + 1
-	newSegmentFile := getNewSegmentName(newSegmentIndex)
+	newSegmentFile := getNewSegmentName(newLsn)
 	file, err := os.OpenFile(filepath.Join(wal.logDir, newSegmentFile), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Println("open new segment file err", err)
@@ -135,7 +187,6 @@ func (wal *WAL) rotateWalSegment() {
 	// wal.bufWriter.Reset(file) // could be another option
 	wal.currSegment = file
 	wal.currSegmentOffset = 0
-	wal.currSegmentIndex++
 }
 
 func (wal *WAL) syncWalBufferToDisk() {
