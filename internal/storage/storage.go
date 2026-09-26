@@ -19,6 +19,7 @@ type Storage struct {
 	flushQueue      chan memtable.Memtable
 	idleFlushTicker *time.Ticker
 	wal             *wal.WAL
+	manifest        *Manifest
 	ctx             context.Context
 	cancel          context.CancelFunc
 }
@@ -48,6 +49,7 @@ func InitStorage() *Storage {
 		flushQueue:      make(chan memtable.Memtable, config.ShunyaConfigs.FlushQueueSize),
 		idleFlushTicker: time.NewTicker(time.Duration(config.ShunyaConfigs.IdleFlushIntervalMillis) * time.Millisecond),
 		wal:             wal.InitWal(),
+		manifest:        InitManifest(),
 		ctx:             ctx,
 		cancel:          cancel,
 	}

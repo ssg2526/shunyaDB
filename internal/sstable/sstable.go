@@ -3,6 +3,7 @@ package sstable
 import (
 	"bufio"
 	"fmt"
+	"math"
 	"os"
 	"path"
 
@@ -21,6 +22,7 @@ type SSTable struct {
 	headerOffset uint32
 	footerOffset uint32
 	dataOffset   uint32
+	sstFileNum   uint64
 }
 
 type SSTBlock struct {
@@ -61,30 +63,44 @@ type SSTIndexEntry struct {
 	lsn         constants.LsnType // lsn of the block's first entry, for the same reason
 }
 
-// TODO: use real file name
-func OpenSSTable() *SSTable {
-	sstFile, err := os.OpenFile(path.Join(config.ShunyaConfigs.DataDir, "sstable1"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+type FlushResult struct {
+	MinKey []byte
+	MaxKey []byte
+	MinLsn constants.LsnType
+	MaxLsn constants.LsnType
+}
+
+func OpenSSTable(fileNum uint64) *SSTable {
+	sstFile, err := os.OpenFile(path.Join(config.ShunyaConfigs.DataDir, fmt.Sprintf("%016d", fileNum)+".sst"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Println("open new sstable file err", err)
 	}
 	sstable := &SSTable{
-		sstFile: sstFile,
+		sstFile:    sstFile,
+		bufWriter:  bufio.NewWriterSize(sstFile, config.ShunyaConfigs.SSTWriteBufferSize),
+		sstFileNum: fileNum,
 	}
-	sstable.bufWriter = bufio.NewWriterSize(sstFile, config.ShunyaConfigs.SSTWriteBufferSize)
 
 	return sstable
 }
 
-func (sstable *SSTable) Flush(memtable memtable.Memtable) {
+func (sstable *SSTable) Flush(memtable memtable.Memtable) FlushResult {
 
 	blockEntries := make([]SSTBlockEntry, 0)
 	indexEntries := make([]SSTIndexEntry, 0)
 	it := memtable.NewVersionedIterator()
 	blockSize := 0
+	minLsn := constants.LsnType(0)
+	maxLsn := constants.LsnType(math.MaxInt64)
+	maxKey := []byte(nil)
 	offset := uint32(0)
 	for it.Valid() {
 		versions := it.Versions()
 		for _, version := range versions {
+
+			minLsn = min(version.Lsn, minLsn)
+			maxLsn = max(version.Lsn, maxLsn)
+
 			sstBlockEntry := SSTBlockEntry{
 				internalKey: SSTableInternalKey{key: it.Key(), lsn: version.Lsn, entryType: version.EntryType},
 				value:       version.Value,
@@ -111,6 +127,7 @@ func (sstable *SSTable) Flush(memtable memtable.Memtable) {
 				blockSize = 0
 				blockEntries = make([]SSTBlockEntry, 0)
 			}
+			maxKey = it.Key()
 		}
 		it.Next()
 	}
@@ -134,6 +151,7 @@ func (sstable *SSTable) Flush(memtable memtable.Memtable) {
 	sstIndex := &SSTIndex{
 		indexEntries: indexEntries,
 	}
+	maxKey = sstIndex.indexEntries[len(sstIndex.indexEntries)-1].key
 	marshalledIndexData := MarshalSSTIndex(sstIndex)
 	sstable.bufWriter.Write(marshalledIndexData)
 
@@ -145,6 +163,14 @@ func (sstable *SSTable) Flush(memtable memtable.Memtable) {
 	marshalledFooterData := MarshalSSTFooter(sstFooter)
 	sstable.bufWriter.Write(marshalledFooterData)
 	sstable.bufWriter.Flush()
+
+	return FlushResult{
+		MinKey: sstIndex.indexEntries[0].key,
+		MaxKey: maxKey,
+		MinLsn: minLsn,
+		MaxLsn: maxLsn,
+	}
+
 }
 
 func (sstable *SSTable) ReadFooter() {

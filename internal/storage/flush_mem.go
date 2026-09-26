@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"fmt"
 	"time"
 
+	contsants "github.com/ssg2526/shunya/internal/constants"
 	"github.com/ssg2526/shunya/internal/memtable"
 	"github.com/ssg2526/shunya/internal/sstable"
 )
@@ -38,10 +40,24 @@ func (storage *Storage) StartIdleFlushWorker(maxLifetime time.Duration) {
 }
 
 func (storage *Storage) FlushMemTable(memTable memtable.Memtable) {
-	sstable := sstable.OpenSSTable()
-	sstable.Flush(memTable)
-	//TODO: record the sst file so that reads can use the file
-	//TODO: also need to close the file at some point
+	latestFileNum := storage.manifest.fileNum
+	sstable := sstable.OpenSSTable(latestFileNum + 1)
+	flushResult := sstable.Flush(memTable)
+
+	manifestOps := make([]ManifestOp, 1)
+	manifestOps[0] = ManifestOp{
+		minKey:     flushResult.MinKey,
+		maxKey:     flushResult.MaxKey,
+		sstFileNum: latestFileNum,
+		entryType:  contsants.PutEntry,
+		level:      uint32(0),
+		minLsn:     flushResult.MinLsn,
+		maxLsn:     flushResult.MaxLsn,
+	}
+	err := storage.manifest.AppendToManifest(&ManifestEntry{manifestOps: manifestOps})
+	if err != nil {
+		fmt.Println("append to manifest err", err)
+	}
 
 	storage.mu.Lock()
 	defer storage.mu.Unlock()

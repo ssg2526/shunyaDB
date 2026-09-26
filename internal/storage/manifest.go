@@ -18,11 +18,15 @@ const (
 	MANIFEST_FILE_SUFFIX = "MANIFEST"
 	CURRENT_POINTER_FILE = "CURRENT"
 
-	MANIFEST_ENTRY_COUNT_SIZE = 4
-	MANIFEST_FILE_NUM_SIZE    = 8
-	MANIFEST_ENTRY_TYPE_SIZE  = 1
-	MANIFEST_CHECKSUM_SIZE    = 8
-	MANIFEST_RECORD_SIZE      = MANIFEST_FILE_NUM_SIZE + MANIFEST_ENTRY_TYPE_SIZE
+	MANIFEST_OP_COUNT_SIZE       = 2
+	MANIFEST_ENTRY_BYTES_SIZE    = 4
+	MANIFEST_KEY_LEN_SIZE        = 4
+	MANIFEST_FILE_NUM_SIZE       = 8
+	MANIFEST_ENTRY_TYPE_SIZE     = 1
+	MANIFEST_LEVEL_SIZE          = 4
+	MANIFEST_LSN_SIZE            = 8
+	MANIFEST_CHECKSUM_SIZE       = 8
+	MANIFEST_RECORD_SIZE_WO_KEYS = MANIFEST_FILE_NUM_SIZE + MANIFEST_ENTRY_TYPE_SIZE + MANIFEST_LEVEL_SIZE + 2*MANIFEST_LSN_SIZE + 2*MANIFEST_KEY_LEN_SIZE
 )
 
 var manifestCrc64Table = crc64.MakeTable(crc64.ISO)
@@ -34,9 +38,18 @@ type Manifest struct {
 	size         int
 }
 
+type ManifestOp struct {
+	minKey     []byte
+	maxKey     []byte
+	sstFileNum uint64
+	entryType  constants.EntryType
+	level      uint32
+	minLsn     constants.LsnType
+	maxLsn     constants.LsnType
+}
+
 type ManifestEntry struct {
-	sstFileNum []uint64
-	entryType  []constants.EntryType
+	manifestOps []ManifestOp
 }
 
 func InitManifest() (manifest *Manifest) {
@@ -53,21 +66,52 @@ func InitManifest() (manifest *Manifest) {
 }
 
 func (manifest *Manifest) MarshalManifestEntry(manifestEntry *ManifestEntry) []byte {
-	entryCount := uint32(len(manifestEntry.sstFileNum))
-	totalSize := MANIFEST_ENTRY_COUNT_SIZE + int(entryCount)*MANIFEST_RECORD_SIZE + MANIFEST_CHECKSUM_SIZE
+
+	totalKeyLengths := 0
+	for _, manifestOp := range manifestEntry.manifestOps {
+		totalKeyLengths += len(manifestOp.minKey) + len(manifestOp.maxKey)
+	}
+	opCount := len(manifestEntry.manifestOps)
+	opsSize := opCount*MANIFEST_RECORD_SIZE_WO_KEYS + totalKeyLengths
+	totalSize := MANIFEST_OP_COUNT_SIZE + MANIFEST_ENTRY_BYTES_SIZE + opsSize + MANIFEST_CHECKSUM_SIZE
 
 	marshalled := make([]byte, totalSize)
 
 	offset := 0
-	binary.LittleEndian.PutUint32(marshalled[offset:], entryCount)
-	offset += MANIFEST_ENTRY_COUNT_SIZE
+	binary.LittleEndian.PutUint16(marshalled[offset:], uint16(opCount))
+	offset += MANIFEST_OP_COUNT_SIZE
 
-	for i := 0; i < int(entryCount); i++ {
-		binary.LittleEndian.PutUint64(marshalled[offset:], manifestEntry.sstFileNum[i])
+	binary.LittleEndian.PutUint32(marshalled[offset:], uint32(opsSize))
+	offset += MANIFEST_ENTRY_BYTES_SIZE
+
+	for _, manifestOp := range manifestEntry.manifestOps {
+		minKeyLen := len(manifestOp.minKey)
+		maxKeyLen := len(manifestOp.maxKey)
+
+		binary.LittleEndian.PutUint32(marshalled[offset:], uint32(minKeyLen))
+		offset += MANIFEST_KEY_LEN_SIZE
+		copy(marshalled[offset:], manifestOp.minKey)
+		offset += minKeyLen
+
+		binary.LittleEndian.PutUint32(marshalled[offset:], uint32(maxKeyLen))
+		offset += MANIFEST_KEY_LEN_SIZE
+		copy(marshalled[offset:], manifestOp.maxKey)
+		offset += maxKeyLen
+
+		binary.LittleEndian.PutUint64(marshalled[offset:], manifestOp.sstFileNum)
 		offset += MANIFEST_FILE_NUM_SIZE
 
-		marshalled[offset] = byte(manifestEntry.entryType[i])
+		marshalled[offset] = byte(manifestOp.entryType)
 		offset += MANIFEST_ENTRY_TYPE_SIZE
+
+		binary.LittleEndian.PutUint32(marshalled[offset:], manifestOp.level)
+		offset += MANIFEST_LEVEL_SIZE
+
+		binary.LittleEndian.PutUint64(marshalled[offset:], uint64(manifestOp.minLsn))
+		offset += MANIFEST_LSN_SIZE
+
+		binary.LittleEndian.PutUint64(marshalled[offset:], uint64(manifestOp.maxLsn))
+		offset += MANIFEST_LSN_SIZE
 	}
 
 	checksum := crc64.Checksum(marshalled[:offset], manifestCrc64Table)
@@ -78,37 +122,74 @@ func (manifest *Manifest) MarshalManifestEntry(manifestEntry *ManifestEntry) []b
 
 func (manifest *Manifest) UnMarshalManifestEntry(marshalEntryBytes []byte) (manifestEntry *ManifestEntry) {
 	offset := 0
-	entryCount := binary.LittleEndian.Uint32(marshalEntryBytes[offset:])
-	offset += MANIFEST_ENTRY_COUNT_SIZE
 
-	sstFileNum := make([]uint64, entryCount)
-	entryType := make([]constants.EntryType, entryCount)
+	opCount := binary.LittleEndian.Uint16(marshalEntryBytes[offset:])
+	offset += MANIFEST_OP_COUNT_SIZE
 
-	for i := uint32(0); i < entryCount; i++ {
-		sstFileNum[i] = binary.LittleEndian.Uint64(marshalEntryBytes[offset:])
+	// opsSize is only needed by the caller/replay logic for a pre-flight
+	// "do I have enough bytes before EOF" check; not needed to decode here.
+	offset += MANIFEST_ENTRY_BYTES_SIZE
+
+	manifestOps := make([]ManifestOp, 0, opCount)
+
+	for i := uint16(0); i < opCount; i++ {
+		minKeyLen := binary.LittleEndian.Uint32(marshalEntryBytes[offset:])
+		offset += MANIFEST_KEY_LEN_SIZE
+		minKey := marshalEntryBytes[offset : offset+int(minKeyLen)]
+		offset += int(minKeyLen)
+
+		maxKeyLen := binary.LittleEndian.Uint32(marshalEntryBytes[offset:])
+		offset += MANIFEST_KEY_LEN_SIZE
+		maxKey := marshalEntryBytes[offset : offset+int(maxKeyLen)]
+		offset += int(maxKeyLen)
+
+		sstFileNum := binary.LittleEndian.Uint64(marshalEntryBytes[offset:])
 		offset += MANIFEST_FILE_NUM_SIZE
 
-		entryType[i] = constants.EntryType(marshalEntryBytes[offset])
+		entryType := constants.EntryType(marshalEntryBytes[offset])
 		offset += MANIFEST_ENTRY_TYPE_SIZE
+
+		level := binary.LittleEndian.Uint32(marshalEntryBytes[offset:])
+		offset += MANIFEST_LEVEL_SIZE
+
+		minLsn := constants.LsnType(binary.LittleEndian.Uint64(marshalEntryBytes[offset:]))
+		offset += MANIFEST_LSN_SIZE
+
+		maxLsn := constants.LsnType(binary.LittleEndian.Uint64(marshalEntryBytes[offset:]))
+		offset += MANIFEST_LSN_SIZE
+
+		manifestOps = append(manifestOps, ManifestOp{
+			minKey:     minKey,
+			maxKey:     maxKey,
+			sstFileNum: sstFileNum,
+			entryType:  entryType,
+			level:      level,
+			minLsn:     minLsn,
+			maxLsn:     maxLsn,
+		})
 	}
 	// remaining bytes at marshalEntryBytes[offset:] are the trailing checksum,
 	// left to the caller/replay logic to verify since ManifestEntry doesn't carry it.
 
 	return &ManifestEntry{
-		sstFileNum: sstFileNum,
-		entryType:  entryType,
+		manifestOps: manifestOps,
 	}
 }
 
-func (manifest *Manifest) AppendToManifest(manifestEntry *ManifestEntry) bool {
+func (manifest *Manifest) AppendToManifest(manifestEntry *ManifestEntry) error {
 	manifestEntryBytes := manifest.MarshalManifestEntry(manifestEntry)
 	if _, err := manifest.bufWriter.Write(manifestEntryBytes); err != nil {
-		return false
+		return err
 	}
 	manifest.bufWriter.Flush()
 	manifest.manifestFile.Sync()
 
-	return true
+	return nil
+}
+
+func (manifest *Manifest) ReplayManifestFile() (manifestEntries []ManifestEntry) {
+	GetCurrentManifest(config.ShunyaConfigs.DataDir)
+	return nil
 }
 
 func GetCurrentManifest(dataDir string) (*os.File, uint64, int) {
@@ -134,7 +215,7 @@ func GetCurrentManifest(dataDir string) (*os.File, uint64, int) {
 	}
 	manifestNum, err := GetCurrentManifestNumFromCurrent(dataDir)
 	manFileName := fmt.Sprintf("%016d", manifestNum) + "_" + MANIFEST_FILE_SUFFIX
-	manifestFile, err := os.OpenFile(manFileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	manifestFile, err := os.OpenFile(filepath.Join(dataDir, manFileName), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Println("open new manifest file err", err)
 	}
