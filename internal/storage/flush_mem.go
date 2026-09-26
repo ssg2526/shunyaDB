@@ -54,6 +54,7 @@ func (storage *Storage) FlushMemTable(memTable memtable.Memtable) {
 		minLsn:     flushResult.MinLsn,
 		maxLsn:     flushResult.MaxLsn,
 	}
+	//TODO: rotate manifest on size full
 	err := storage.manifest.AppendToManifest(&ManifestEntry{manifestOps: manifestOps})
 	if err != nil {
 		fmt.Println("append to manifest err", err)

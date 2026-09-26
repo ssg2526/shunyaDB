@@ -54,7 +54,7 @@ type ManifestEntry struct {
 
 func InitManifest() (manifest *Manifest) {
 
-	manifestFile, fileNum, size := GetCurrentManifest(config.ShunyaConfigs.DataDir)
+	manifestFile, fileNum, size := GetCurrentManifest(config.ShunyaConfigs.ManifestDir)
 	bufWriter := bufio.NewWriterSize(manifestFile, config.ShunyaConfigs.ManifestWriteBufferSize)
 
 	return &Manifest{
@@ -188,34 +188,30 @@ func (manifest *Manifest) AppendToManifest(manifestEntry *ManifestEntry) error {
 }
 
 func (manifest *Manifest) ReplayManifestFile() (manifestEntries []ManifestEntry) {
-	GetCurrentManifest(config.ShunyaConfigs.DataDir)
+	GetCurrentManifest(config.ShunyaConfigs.ManifestDir)
 	return nil
 }
 
-func GetCurrentManifest(dataDir string) (*os.File, uint64, int) {
+func GetCurrentManifest(manifestDir string) (*os.File, uint64, int) {
 
-	dirEntries, err := filepath.Glob(filepath.Join(dataDir))
-	if err != nil {
-		panic(err)
-	}
-	if len(dirEntries) == 0 {
+	if _, err := os.Stat(filepath.Join(manifestDir, CURRENT_POINTER_FILE)); errors.Is(err, os.ErrNotExist) {
 		fileNum := uint64(1)
 		manFilename := fmt.Sprintf("%016d", fileNum) + "_" + MANIFEST_FILE_SUFFIX
-		manifestFile, err := os.OpenFile(filepath.Join(dataDir, manFilename), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		manifestFile, err := os.OpenFile(filepath.Join(manifestDir, manFilename), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			fmt.Println("open new manifest file err", err)
 		}
 		fileNumBytes := make([]byte, 8)
 		binary.LittleEndian.PutUint64(fileNumBytes, fileNum)
-		currfile_err := os.WriteFile(filepath.Join(dataDir, CURRENT_POINTER_FILE), fileNumBytes, 0644)
+		currfile_err := os.WriteFile(filepath.Join(manifestDir, CURRENT_POINTER_FILE), fileNumBytes, 0644)
 		if currfile_err != nil {
 			fmt.Println("open new man curret pointer file err", currfile_err)
 		}
 		return manifestFile, fileNum, 0
 	}
-	manifestNum, err := GetCurrentManifestNumFromCurrent(dataDir)
+	manifestNum, err := GetCurrentManifestNumFromCurrent(manifestDir)
 	manFileName := fmt.Sprintf("%016d", manifestNum) + "_" + MANIFEST_FILE_SUFFIX
-	manifestFile, err := os.OpenFile(filepath.Join(dataDir, manFileName), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	manifestFile, err := os.OpenFile(filepath.Join(manifestDir, manFileName), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Println("open new manifest file err", err)
 	}
@@ -224,8 +220,8 @@ func GetCurrentManifest(dataDir string) (*os.File, uint64, int) {
 
 }
 
-func GetCurrentManifestNumFromCurrent(dataDir string) (uint64, error) {
-	currPtrFilename := filepath.Join(dataDir, CURRENT_POINTER_FILE)
+func GetCurrentManifestNumFromCurrent(manifestDir string) (uint64, error) {
+	currPtrFilename := filepath.Join(manifestDir, CURRENT_POINTER_FILE)
 
 	if _, err := os.Stat(currPtrFilename); errors.Is(err, os.ErrNotExist) {
 		fmt.Println("Curr Pointer File does not exist")

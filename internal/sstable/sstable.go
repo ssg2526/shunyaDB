@@ -90,8 +90,8 @@ func (sstable *SSTable) Flush(memtable memtable.Memtable) FlushResult {
 	indexEntries := make([]SSTIndexEntry, 0)
 	it := memtable.NewVersionedIterator()
 	blockSize := 0
-	minLsn := constants.LsnType(0)
-	maxLsn := constants.LsnType(math.MaxInt64)
+	minLsn := constants.LsnType(math.MaxInt64)
+	maxLsn := constants.LsnType(0)
 	maxKey := []byte(nil)
 	offset := uint32(0)
 	for it.Valid() {
@@ -151,7 +151,6 @@ func (sstable *SSTable) Flush(memtable memtable.Memtable) FlushResult {
 	sstIndex := &SSTIndex{
 		indexEntries: indexEntries,
 	}
-	maxKey = sstIndex.indexEntries[len(sstIndex.indexEntries)-1].key
 	marshalledIndexData := MarshalSSTIndex(sstIndex)
 	sstable.bufWriter.Write(marshalledIndexData)
 

@@ -15,8 +15,8 @@ type ShunyaDBConfig struct {
 	WALMaxSegmentSize        int    `mapstructure:"wal_max_segment_size"`
 	WALWriteBufferSize       int    `mapstructure:"wal_write_buffer_size"`
 	MemTableType             string `mapstructure:"mem_table_type"`
-	StoreMetaDir             string `mapstructure:"store_meta_dir"`
 	DataDir                  string `mapstructure:"data_dir"`
+	ManifestDir              string `mapstructure:"manifest_dir"`
 	SSTWriteBufferSize       int    `mapstructure:"sst_write_buffer_size"`
 	FlushQueueSize           int    `mapstructure:"max_flush_queue_size"`
 	IdleFlushIntervalMillis  int    `mapstructure:"idle_flush_interval_millis"`

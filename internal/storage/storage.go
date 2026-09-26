@@ -95,15 +95,7 @@ func (storage *Storage) Get(key []byte, lsn constants.LsnType) []byte {
 // TODO: need to implememt soft throttling and hard throttling
 func (storage *Storage) Put(key []byte, value []byte, lsn constants.LsnType) []byte {
 	storage.mu.Lock()
-	if storage.activeMem.Size() > MEM_TABLE_FLUSH_SIZE {
-		storage.activeMem.Freeze()
-		memToflush := storage.activeMem
-		storage.activeMem = storage.addMemTable()
-		storage.mu.Unlock()
-		//TODO: understand the channel behaviour as well and why this locking is better.
-		storage.flushQueue <- memToflush
-		storage.mu.Lock()
-	}
+	storage.checkMemTableForFreeze()
 	defer storage.mu.Unlock()
 	targetMem := storage.activeMem
 	targetMem.Put(key, value, lsn, constants.PutEntry)
@@ -112,6 +104,14 @@ func (storage *Storage) Put(key []byte, value []byte, lsn constants.LsnType) []b
 
 func (storage *Storage) Del(key []byte, lsn constants.LsnType) []byte {
 	storage.mu.Lock()
+	storage.checkMemTableForFreeze()
+	defer storage.mu.Unlock()
+	targetMem := storage.activeMem
+	targetMem.Put(key, nil, lsn, constants.DelEntry)
+	return []byte("OK")
+}
+
+func (storage *Storage) checkMemTableForFreeze() {
 	if storage.activeMem.Size() > MEM_TABLE_FLUSH_SIZE {
 		storage.activeMem.Freeze()
 		memToflush := storage.activeMem
@@ -120,10 +120,6 @@ func (storage *Storage) Del(key []byte, lsn constants.LsnType) []byte {
 		storage.flushQueue <- memToflush
 		storage.mu.Lock()
 	}
-	defer storage.mu.Unlock()
-	targetMem := storage.activeMem
-	targetMem.Put(key, nil, lsn, constants.DelEntry)
-	return []byte("OK")
 }
 
 func (storage *Storage) Range(key []byte, limit int, lsnSnapshot constants.LsnType) [][]byte {

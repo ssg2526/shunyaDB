@@ -1,6 +1,7 @@
 host: "localhost"
 port: 4345
 store_meta_dir: "./data/"
+data_dir: "./data/"
 wal_dir: "./data/wal/"
 wal_should_fsync: false
 wal_flush_interval_millis: 5000
@@ -11,4 +12,5 @@ sst_write_buffer_size: 65536
 mem_table_type: "skiplist"
 max_flush_queue_size: 10
 idle_flush_interval_millis: 1800000
+manifest_dir: "./data/manifest/"
 manifest_write_buffer_size: 4096
