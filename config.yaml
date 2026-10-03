@@ -14,3 +14,4 @@ max_flush_queue_size: 10
 idle_flush_interval_millis: 1800000
 manifest_dir: "./data/manifest/"
 manifest_write_buffer_size: 4096
+max_sst_levels: 10

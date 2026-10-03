@@ -28,11 +28,10 @@ type CommandData struct {
 
 func Start() {
 	config.InitConfig()
-	storageEngine := storage.InitStorage()
-	err := storageEngine.RestoreData()
+	storageEngine, err := storage.InitStorage()
 	if err != nil {
-		fmt.Println("error while restoring data")
-		panic("couldn't restore data")
+		fmt.Println("error while initializing storage")
+		panic("couldn't initialize storage")
 	}
 	ln, err := net.Listen("tcp", ":4242")
 	if err != nil {

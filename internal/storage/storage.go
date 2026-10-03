@@ -32,7 +32,7 @@ func (storage *Storage) AppendToWal(commandData []byte) constants.LsnType {
 	return storage.wal.AppendToWal(commandData)
 }
 
-func InitStorage() *Storage {
+func InitStorage() (*Storage, error) {
 	var memtableObj memtable.Memtable
 
 	switch config.ShunyaConfigs.MemTableType {
@@ -43,26 +43,34 @@ func InitStorage() *Storage {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 
+	manifest, err := InitManifest()
+	if err != nil {
+		return nil, err
+	}
+
 	storage := &Storage{
 		mtQ:             []memtable.Memtable{memtableObj},
 		activeMem:       memtableObj,
 		flushQueue:      make(chan memtable.Memtable, config.ShunyaConfigs.FlushQueueSize),
 		idleFlushTicker: time.NewTicker(time.Duration(config.ShunyaConfigs.IdleFlushIntervalMillis) * time.Millisecond),
 		wal:             wal.InitWal(),
-		manifest:        InitManifest(),
+		manifest:        manifest,
 		ctx:             ctx,
 		cancel:          cancel,
 	}
+
 	storage.StartFlushLoop()
 	go storage.StartIdleFlushWorker(time.Duration(config.ShunyaConfigs.IdleFlushIntervalMillis) * time.Millisecond)
 
-	return storage
+	if err := storage.RestoreData(); err != nil {
+		return nil, err
+	}
+
+	return storage, nil
 }
 
 func (storage *Storage) RestoreData() error {
-	manifestState := storage.manifest.ReplayManifestFile()
-
-	return storage.wal.ReplayWal(manifestState.MaxLsn, func(lsn constants.LsnType, data []byte) error {
+	return storage.wal.ReplayWal(storage.manifest.currentVersion.MaxLsn, func(lsn constants.LsnType, data []byte) error {
 		op, key, value := DecodeWalCommand(data)
 		if op == constants.DelEntry {
 			storage.Del(key, lsn)
