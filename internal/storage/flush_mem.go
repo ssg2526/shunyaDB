@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	contsants "github.com/ssg2526/shunya/internal/constants"
@@ -40,15 +41,15 @@ func (storage *Storage) StartIdleFlushWorker(maxLifetime time.Duration) {
 }
 
 func (storage *Storage) FlushMemTable(memTable memtable.Memtable) {
-	latestFileNum := storage.manifest.fileNum
-	sstable := sstable.OpenSSTable(latestFileNum + 1)
+	newFileNum := atomic.AddUint64(&storage.manifest.maxSStFileNum, 1)
+	sstable := sstable.OpenSSTable(newFileNum)
 	flushResult := sstable.Flush(memTable)
 
 	manifestOps := make([]ManifestOp, 1)
 	manifestOps[0] = ManifestOp{
 		minKey:     flushResult.MinKey,
 		maxKey:     flushResult.MaxKey,
-		sstFileNum: latestFileNum,
+		sstFileNum: newFileNum,
 		entryType:  contsants.PutEntry,
 		level:      uint32(0),
 		minLsn:     flushResult.MinLsn,

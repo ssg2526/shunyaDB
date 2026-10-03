@@ -70,7 +70,7 @@ func InitStorage() (*Storage, error) {
 }
 
 func (storage *Storage) RestoreData() error {
-	return storage.wal.ReplayWal(storage.manifest.currentVersion.MaxLsn, func(lsn constants.LsnType, data []byte) error {
+	return storage.wal.ReplayWal(storage.manifest.GetMaxLsn(), func(lsn constants.LsnType, data []byte) error {
 		op, key, value := DecodeWalCommand(data)
 		if op == constants.DelEntry {
 			storage.Del(key, lsn)

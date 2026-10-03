@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 
 	constants "github.com/ssg2526/shunya/internal/constants"
 
@@ -39,6 +40,7 @@ type Manifest struct {
 	size           int
 	currentVersion *Version
 	versionHead    *Version
+	maxSStFileNum  uint64
 }
 
 type ManifestOp struct {
@@ -63,8 +65,7 @@ type Version struct {
 	Levels           [][]SSTableMeta
 	Next             *Version
 	Prev             *Version
-	staleSstFileList []string
-	MaxLsn           constants.LsnType
+	staleSstFileList []uint64
 }
 
 type ManifestEntry struct {
@@ -204,7 +205,6 @@ func (manifest *Manifest) UnMarshalManifestEntry(marshalEntryBytes []byte) (mani
 
 func (manifest *Manifest) AppendToManifest(manifestEntry *ManifestEntry) error {
 	//TODO: handle concurrency
-	//TODO: Handle version update
 	manifestEntryBytes := manifest.MarshalManifestEntry(manifestEntry)
 	if _, err := manifest.bufWriter.Write(manifestEntryBytes); err != nil {
 		return err
@@ -212,16 +212,66 @@ func (manifest *Manifest) AppendToManifest(manifestEntry *ManifestEntry) error {
 	manifest.bufWriter.Flush()
 	manifest.manifestFile.Sync()
 
+	oldLevels := manifest.currentVersion.Levels
+	newLevels := make([][]SSTableMeta, len(oldLevels))
+	copy(newLevels, oldLevels)
+
+	touched := make(map[int]bool)
+	staleFiles := make([]uint64, 0)
+
+	for _, manifestOp := range manifestEntry.manifestOps {
+		level := int(manifestOp.level)
+		if !touched[level] {
+			newLevels[level] = append([]SSTableMeta(nil), oldLevels[level]...)
+			touched[level] = true
+		}
+
+		if manifestOp.entryType == constants.DelEntry {
+			staleFiles = append(staleFiles, manifestOp.sstFileNum)
+			for i, sstMeta := range newLevels[level] {
+				if sstMeta.sstFileNum == manifestOp.sstFileNum {
+					newLevels[level] = append(newLevels[level][:i], newLevels[level][i+1:]...)
+					break
+				}
+			}
+		} else {
+			newLevels[level] = append(newLevels[level], SSTableMeta{
+				minKey:     manifestOp.minKey,
+				maxKey:     manifestOp.maxKey,
+				sstFileNum: manifestOp.sstFileNum,
+				minLsn:     manifestOp.minLsn,
+				maxLsn:     manifestOp.maxLsn,
+			})
+		}
+	}
+
+	newVersion := &Version{
+		Levels:           newLevels,
+		staleSstFileList: staleFiles,
+		Prev:             manifest.currentVersion,
+	}
+	manifest.currentVersion.Next = newVersion
+	manifest.currentVersion = newVersion
+
 	return nil
 }
 
+func (manifest *Manifest) GetMaxLsn() constants.LsnType {
+	levels := manifest.currentVersion.Levels
+	lastInd := len(levels[0]) - 1
+	if lastInd < 0 {
+		return 0
+	}
+	return levels[0][lastInd].maxLsn
+}
+
 func (manifest *Manifest) ReplayManifestFile() (*Version, error) {
+	maxSStFileNum := uint64(0)
 	if _, err := manifest.manifestFile.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
 
 	live := make(map[uint64]ManifestOp)
-	var maxLsn constants.LsnType
 
 	for {
 		manifestEntry, err := manifest.ReadNextManifestEntry(manifest.manifestFile)
@@ -233,14 +283,14 @@ func (manifest *Manifest) ReplayManifestFile() (*Version, error) {
 		}
 
 		for _, manifestOp := range manifestEntry.manifestOps {
-			if manifestOp.maxLsn > maxLsn {
-				maxLsn = manifestOp.maxLsn
-			}
 
 			if manifestOp.entryType == constants.DelEntry {
 				delete(live, manifestOp.sstFileNum)
 			} else {
 				live[manifestOp.sstFileNum] = manifestOp
+				if manifestOp.sstFileNum > maxSStFileNum {
+					maxSStFileNum = manifestOp.sstFileNum
+				}
 			}
 		}
 	}
@@ -256,9 +306,15 @@ func (manifest *Manifest) ReplayManifestFile() (*Version, error) {
 		})
 	}
 
+	for _, level := range levels {
+		sort.Slice(level, func(i, j int) bool {
+			return level[i].sstFileNum < level[j].sstFileNum
+		})
+	}
+	manifest.maxSStFileNum = maxSStFileNum
+
 	return &Version{
 		Levels: levels,
-		MaxLsn: maxLsn,
 	}, nil
 }
 
