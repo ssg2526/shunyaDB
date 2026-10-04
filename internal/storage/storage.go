@@ -109,7 +109,42 @@ func (storage *Storage) Get(key []byte, lsn constants.LsnType) []byte {
 		}
 	}
 
+	version := storage.manifest.AcquireRef()
+	defer storage.manifest.ReleaseRef(version)
+
+	for _, level := range version.Levels {
+		for _, sstMeta := range level {
+			//TODO: implement the read
+			// implement an open sstable cache (fixed size and build it on startup and use LRU for eviction for now)
+			// also the sstable block cache should also be created to identify all blocks (can be cached on startup for all sst)
+			// from metadata find the sstable to read and identify the block from the cache and then check if sst is opened in sst file cache
+			// if already in cache read the required block and find the key. If sst file is not in cache open the file and use LRU to evict and then read
+			// do this for all levels until you find the key (this is sequential, as soon as you find the key return)
+		}
+	}
+
 	return []byte("")
+}
+
+func (storage *Storage) Range(key []byte, limit int, lsnSnapshot constants.LsnType) [][]byte {
+	it := storage.mtQ[0].NewIterator(lsnSnapshot)
+	res := [][]byte{}
+	it.Seek(key)
+	for it.Valid() && limit > 0 {
+		key := it.Key()
+		val := it.Value()
+		keyLen := len(key)
+		valLen := len(val)
+		kvBuf := make([]byte, len(key)+len(val)+8)
+		binary.LittleEndian.PutUint32(kvBuf, uint32(keyLen))
+		binary.LittleEndian.PutUint32(kvBuf, uint32(valLen))
+		copy(kvBuf[8:], key)
+		copy(kvBuf[8+keyLen:], val)
+		res = append(res, kvBuf)
+		it.Next()
+		limit--
+	}
+	return res
 }
 
 // TODO: need to implememt soft throttling and hard throttling
@@ -140,25 +175,4 @@ func (storage *Storage) checkMemTableForFreeze() {
 		storage.flushQueue <- memToflush
 		storage.mu.Lock()
 	}
-}
-
-func (storage *Storage) Range(key []byte, limit int, lsnSnapshot constants.LsnType) [][]byte {
-	it := storage.mtQ[0].NewIterator(lsnSnapshot)
-	res := [][]byte{}
-	it.Seek(key)
-	for it.Valid() && limit > 0 {
-		key := it.Key()
-		val := it.Value()
-		keyLen := len(key)
-		valLen := len(val)
-		kvBuf := make([]byte, len(key)+len(val)+8)
-		binary.LittleEndian.PutUint32(kvBuf, uint32(keyLen))
-		binary.LittleEndian.PutUint32(kvBuf, uint32(valLen))
-		copy(kvBuf[8:], key)
-		copy(kvBuf[8+keyLen:], val)
-		res = append(res, kvBuf)
-		it.Next()
-		limit--
-	}
-	return res
 }

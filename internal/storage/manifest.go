@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync/atomic"
 
 	constants "github.com/ssg2526/shunya/internal/constants"
 
@@ -66,6 +67,7 @@ type Version struct {
 	Next             *Version
 	Prev             *Version
 	staleSstFileList []uint64
+	refCounter       atomic.Int32
 }
 
 type ManifestEntry struct {
@@ -74,7 +76,7 @@ type ManifestEntry struct {
 
 func InitManifest() (*Manifest, error) {
 
-	manifestFile, fileNum, size := GetCurrentManifest(config.ShunyaConfigs.ManifestDir)
+	manifestFile, fileNum, size := getCurrentManifest(config.ShunyaConfigs.ManifestDir)
 	bufWriter := bufio.NewWriterSize(manifestFile, config.ShunyaConfigs.ManifestWriteBufferSize)
 
 	manifest := &Manifest{
@@ -340,7 +342,7 @@ func (manifest *Manifest) ReadNextManifestEntry(manifestFile *os.File) (*Manifes
 	return manifest.UnMarshalManifestEntry(entryByteBuf), nil
 }
 
-func GetCurrentManifest(manifestDir string) (*os.File, uint64, int) {
+func getCurrentManifest(manifestDir string) (*os.File, uint64, int) {
 
 	if _, err := os.Stat(filepath.Join(manifestDir, CURRENT_POINTER_FILE)); errors.Is(err, os.ErrNotExist) {
 		fileNum := uint64(1)
@@ -357,7 +359,7 @@ func GetCurrentManifest(manifestDir string) (*os.File, uint64, int) {
 		}
 		return manifestFile, fileNum, 0
 	}
-	manifestNum, err := GetCurrentManifestNumFromCurrent(manifestDir)
+	manifestNum, err := getCurrentManifestNumFromCurrent(manifestDir)
 	manFileName := fmt.Sprintf("%016d", manifestNum) + "_" + MANIFEST_FILE_SUFFIX
 	manifestFile, err := os.OpenFile(filepath.Join(manifestDir, manFileName), os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
@@ -368,7 +370,7 @@ func GetCurrentManifest(manifestDir string) (*os.File, uint64, int) {
 
 }
 
-func GetCurrentManifestNumFromCurrent(manifestDir string) (uint64, error) {
+func getCurrentManifestNumFromCurrent(manifestDir string) (uint64, error) {
 	currPtrFilename := filepath.Join(manifestDir, CURRENT_POINTER_FILE)
 
 	if _, err := os.Stat(currPtrFilename); errors.Is(err, os.ErrNotExist) {
@@ -384,6 +386,16 @@ func GetCurrentManifestNumFromCurrent(manifestDir string) (uint64, error) {
 	}
 
 	return binary.LittleEndian.Uint64(manFileNumStr), nil
+}
+
+func (manifest *Manifest) AcquireRef() *Version {
+	version := manifest.currentVersion
+	version.refCounter.Add(1)
+	return version
+}
+
+func (manifest *Manifest) ReleaseRef(version *Version) {
+	version.refCounter.Add(-1)
 }
 
 func updateCurrentPtrFileAtomically(dataDir string, currentManifestFileNum uint64) error {
