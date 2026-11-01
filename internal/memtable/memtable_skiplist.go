@@ -19,7 +19,7 @@ func NewMemSkiplist() *MemSkiplist {
 		skiplist:     skiplist.NewSkiplist(0.5, 12)}
 }
 
-func (memSkiplist *MemSkiplist) Get(key []byte, lsn constants.LsnType) []byte {
+func (memSkiplist *MemSkiplist) Get(key []byte, lsn constants.LsnType) ([]byte, constants.LookupResult) {
 	memSkiplist.RegisterReader(lsn)
 	defer memSkiplist.DeregisterReader(lsn)
 	return memSkiplist.skiplist.Get(key, lsn)

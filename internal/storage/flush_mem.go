@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -63,10 +64,7 @@ func (storage *Storage) FlushMemTable(memTable memtable.Memtable) {
 
 	storage.mu.Lock()
 	defer storage.mu.Unlock()
-	for i, mt := range storage.mtQ {
-		if mt == memTable {
-			storage.mtQ = append(storage.mtQ[:i], storage.mtQ[i+1:]...)
-			break
-		}
-	}
+	oldMtQ := *storage.mtQPtr.Load()
+	newMtQ := slices.DeleteFunc(slices.Clone(oldMtQ), func(m memtable.Memtable) bool { return m == memTable })
+	storage.mtQPtr.Store(&newMtQ)
 }

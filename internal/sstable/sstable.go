@@ -2,10 +2,16 @@ package sstable
 
 import (
 	"bufio"
+	"bytes"
+	"cmp"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"os"
 	"path"
+	"sort"
+	"sync/atomic"
 
 	"github.com/ssg2526/shunya/config"
 	constants "github.com/ssg2526/shunya/internal/constants"
@@ -25,11 +31,17 @@ type SSTable struct {
 	sstFileNum   uint64
 }
 
+type SSTableRead struct {
+	SstFile    *os.File
+	SstFileNum uint64
+	RefCounter atomic.Int32
+}
+
 type SSTBlock struct {
-	blockLen   uint32
-	entryCount uint32
-	entries    []SSTBlockEntry
-	checksum   uint64
+	BlockLen   uint32
+	EntryCount uint32
+	Entries    []SSTBlockEntry
+	Checksum   uint64
 }
 
 type SSTBlockEntry struct {
@@ -45,22 +57,22 @@ type SSTableInternalKey struct {
 
 type SSTFooter struct {
 	indexOffset uint32
-	indexLen    uint32
+	indexSize   uint32
 	version     uint16
 	magic       [8]byte
 }
 
 type SSTIndex struct {
-	indexEntries []SSTIndexEntry
-	indexLen     uint32
-	checksum     uint64
+	IndexEntries []SSTIndexEntry
+	IndexSize    uint32
+	Checksum     uint64
 }
 
 type SSTIndexEntry struct {
-	blockLen    uint32
-	blockOffset uint32
-	key         []byte            // composite key: user key of the block's first entry
-	lsn         constants.LsnType // lsn of the block's first entry, for the same reason
+	BlockLen    uint32
+	BlockOffset uint32
+	Key         []byte            // composite key: user key of the block's first entry
+	Lsn         constants.LsnType // lsn of the block's first entry, for the same reason
 }
 
 type FlushResult struct {
@@ -82,6 +94,22 @@ func OpenSSTable(fileNum uint64) *SSTable {
 	}
 
 	return sstable
+}
+
+func OpenSSTableRead(fileNum uint64) (*SSTableRead, error) {
+	sstFile, err := os.OpenFile(path.Join(config.ShunyaConfigs.DataDir, fmt.Sprintf("%016d", fileNum)+".sst"), os.O_RDONLY, 0444)
+	if err != nil {
+		fmt.Println("open new sstable file err", err)
+	}
+
+	return &SSTableRead{
+		SstFile:    sstFile,
+		SstFileNum: fileNum,
+	}, nil
+}
+
+func (sstable *SSTable) CloseSSTable(fileNum uint64) {
+
 }
 
 func (sstable *SSTable) Flush(memtable memtable.Memtable) FlushResult {
@@ -109,19 +137,19 @@ func (sstable *SSTable) Flush(memtable memtable.Memtable) FlushResult {
 			blockSize += KEY_VAL_LEN_SIZE + len(it.Key()) + LSN_SIZE + ENTRY_TYPE_SIZE + len(version.Value)
 			if blockSize >= SSTABLE_BLOCK_SIZE_BYTES {
 				sstBlock := &SSTBlock{
-					entryCount: uint32(len(blockEntries)),
-					entries:    blockEntries,
+					EntryCount: uint32(len(blockEntries)),
+					Entries:    blockEntries,
 				}
 				marshalledData := MarshalSSTDataBlock(sstBlock)
 				sstable.bufWriter.Write(marshalledData)
 
 				indexEntry := SSTIndexEntry{
-					blockLen:    sstBlock.blockLen,
-					blockOffset: offset,
-					key:         sstBlock.entries[0].internalKey.key,
-					lsn:         sstBlock.entries[0].internalKey.lsn,
+					BlockLen:    sstBlock.BlockLen,
+					BlockOffset: offset,
+					Key:         sstBlock.Entries[0].internalKey.key,
+					Lsn:         sstBlock.Entries[0].internalKey.lsn,
 				}
-				offset += sstBlock.blockLen
+				offset += sstBlock.BlockLen
 				indexEntries = append(indexEntries, indexEntry)
 
 				blockSize = 0
@@ -133,30 +161,30 @@ func (sstable *SSTable) Flush(memtable memtable.Memtable) FlushResult {
 	}
 	if blockSize > 0 {
 		sstBlock := &SSTBlock{
-			entryCount: uint32(len(blockEntries)),
-			entries:    blockEntries,
+			EntryCount: uint32(len(blockEntries)),
+			Entries:    blockEntries,
 		}
 		marshalledData := MarshalSSTDataBlock(sstBlock)
 		sstable.bufWriter.Write(marshalledData)
 
 		indexEntry := SSTIndexEntry{
-			blockLen:    sstBlock.blockLen,
-			blockOffset: offset,
-			key:         sstBlock.entries[0].internalKey.key,
-			lsn:         sstBlock.entries[0].internalKey.lsn,
+			BlockLen:    sstBlock.BlockLen,
+			BlockOffset: offset,
+			Key:         sstBlock.Entries[0].internalKey.key,
+			Lsn:         sstBlock.Entries[0].internalKey.lsn,
 		}
-		offset += sstBlock.blockLen
+		offset += sstBlock.BlockLen
 		indexEntries = append(indexEntries, indexEntry)
 	}
 	sstIndex := &SSTIndex{
-		indexEntries: indexEntries,
+		IndexEntries: indexEntries,
 	}
 	marshalledIndexData := MarshalSSTIndex(sstIndex)
 	sstable.bufWriter.Write(marshalledIndexData)
 
 	sstFooter := &SSTFooter{
 		indexOffset: offset,
-		indexLen:    sstIndex.indexLen,
+		indexSize:   sstIndex.IndexSize,
 		version:     VERSION,
 	}
 	marshalledFooterData := MarshalSSTFooter(sstFooter)
@@ -164,7 +192,7 @@ func (sstable *SSTable) Flush(memtable memtable.Memtable) FlushResult {
 	sstable.bufWriter.Flush()
 
 	return FlushResult{
-		MinKey: sstIndex.indexEntries[0].key,
+		MinKey: sstIndex.IndexEntries[0].Key,
 		MaxKey: maxKey,
 		MinLsn: minLsn,
 		MaxLsn: maxLsn,
@@ -172,10 +200,112 @@ func (sstable *SSTable) Flush(memtable memtable.Memtable) FlushResult {
 
 }
 
-func (sstable *SSTable) ReadFooter() {
-
+func compareInternalKey(key []byte, lsn constants.LsnType, targetKey []byte, targetLsn constants.LsnType) int {
+	if c := bytes.Compare(key, targetKey); c != 0 {
+		return c
+	}
+	return cmp.Compare(lsn, targetLsn)
 }
 
-func (sstable *SSTable) ReadIndex() {
+func (sstIndex *SSTIndex) FindBlock(key []byte, snapshotLsn constants.LsnType) (SSTIndexEntry, bool) {
+	entries := sstIndex.IndexEntries
+	i := sort.Search(len(entries), func(i int) bool {
+		return compareInternalKey(entries[i].Key, entries[i].Lsn, key, snapshotLsn) > 0
+	})
+	if i == 0 {
+		return SSTIndexEntry{}, false
+	}
+	return entries[i-1], true
+}
 
+func (sstBlock *SSTBlock) Search(key []byte, snapshotLsn constants.LsnType) ([]byte, constants.LookupResult) {
+	entries := sstBlock.Entries
+
+	i := sort.Search(len(entries), func(i int) bool {
+		internalKey := entries[i].internalKey
+		return compareInternalKey(internalKey.key, internalKey.lsn, key, snapshotLsn) > 0
+	})
+	if i == 0 {
+		return nil, constants.KeyNotFound
+	}
+
+	entry := entries[i-1]
+	if !bytes.Equal(entry.internalKey.key, key) {
+		return nil, constants.KeyNotFound
+	}
+	if entry.internalKey.entryType == constants.DelEntry {
+		return nil, constants.KeyDeleted
+	}
+	return entry.value, constants.KeyFound
+}
+
+func (sstableRead *SSTableRead) LoadBlock(sstFile *os.File, blockOffset uint32) (SSTBlock, error) {
+	return SSTBlock{}, nil
+}
+
+func (sstableRead *SSTableRead) LoadIndex(sstFile *os.File) (SSTIndex, error) {
+	sstFooter, err := sstableRead.readFooter(sstFile)
+	if err != nil {
+		//log
+	}
+	return sstableRead.readIndex(sstFile, &sstFooter)
+}
+
+func (sstableRead *SSTableRead) readFooter(sstFile *os.File) (SSTFooter, error) {
+	stat, err := sstFile.Stat()
+	if err != nil {
+		//log err
+		return SSTFooter{}, err
+	}
+	footerBytes := make([]byte, FOOTER_SIZE_BYTES)
+	if _, err := sstFile.ReadAt(footerBytes, stat.Size()-FOOTER_SIZE_BYTES); err != nil {
+		return SSTFooter{}, err
+	}
+
+	footerByterOffset := 0
+	indexOffset := binary.LittleEndian.Uint32(footerBytes[footerByterOffset:FOOTER_INDEX_OFFSET_SIZE])
+	footerByterOffset += FOOTER_INDEX_OFFSET_SIZE
+	indexLen := binary.LittleEndian.Uint32(footerBytes[footerByterOffset:FOOTER_INDEX_LEN_SIZE])
+	footerByterOffset += FOOTER_INDEX_LEN_SIZE
+	version := binary.LittleEndian.Uint16(footerBytes[footerByterOffset:FOOTER_VERSION_SIZE])
+	footerByterOffset += FOOTER_VERSION_SIZE
+	magic := footerBytes[footerByterOffset:FOOTER_MAGIC_SIZE]
+
+	if len(magic) != 8 { //add magic num check as well
+		return SSTFooter{}, errors.New("magic number mismatch file corrupted")
+	}
+
+	return SSTFooter{
+		indexOffset: indexOffset,
+		indexSize:   indexLen,
+		version:     version,
+		magic:       [8]byte(magic),
+	}, nil
+}
+
+func (sstableRead *SSTableRead) readIndex(sstFile *os.File, sstFooter *SSTFooter) (SSTIndex, error) {
+	indexBytes := make([]byte, sstFooter.indexSize)
+	if _, err := sstFile.ReadAt(indexBytes, int64(sstFooter.indexOffset)); err != nil {
+		//log
+		return SSTIndex{}, err
+	}
+	sstIndex := UnMarshalSSTIndex(indexBytes)
+
+	return *sstIndex, nil
+}
+
+func (sstableRead *SSTableRead) RegisterSSTReader() {
+	sstableRead.RefCounter.Add(1)
+}
+
+func (sstableRead *SSTableRead) ReleaseSSTReader() {
+	sstableRead.RefCounter.Add(-1)
+}
+
+func (sstableRead *SSTableRead) GetSSTReadRef() int32 {
+	return sstableRead.RefCounter.Load()
+}
+
+func (sstableRead *SSTableRead) CloseSST() error {
+	return sstableRead.SstFile.Close()
 }

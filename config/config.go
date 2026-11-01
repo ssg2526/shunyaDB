@@ -22,6 +22,9 @@ type ShunyaDBConfig struct {
 	IdleFlushIntervalMillis  int    `mapstructure:"idle_flush_interval_millis"`
 	ManifestWriteBufferSize  int    `mapstructure:"manifest_write_buffer_size"`
 	MaxSSTLevel              int    `mapstructure:"max_sst_levels"`
+	OpenSstLRUSize           int    `mapstructure:"open_sst_cache_size"`
+	BlockCacheSizeByte       int    `mapstructure:"block_cache_size_byte"`
+	SSTIndexCacheSizeByte    int    `mapstructure:"sst_index_cache_size"`
 }
 
 func InitConfig() {

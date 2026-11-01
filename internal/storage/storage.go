@@ -1,20 +1,25 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/maypok86/otter/v2"
 	"github.com/ssg2526/shunya/config"
 	constants "github.com/ssg2526/shunya/internal/constants"
 	"github.com/ssg2526/shunya/internal/memtable"
+	"github.com/ssg2526/shunya/internal/sstable"
 	"github.com/ssg2526/shunya/internal/wal"
 )
 
 type Storage struct {
 	mu              sync.Mutex
-	mtQ             []memtable.Memtable
+	mtQPtr          atomic.Pointer[[]memtable.Memtable]
 	activeMem       memtable.Memtable
 	flushQueue      chan memtable.Memtable
 	idleFlushTicker *time.Ticker
@@ -22,6 +27,14 @@ type Storage struct {
 	manifest        *Manifest
 	ctx             context.Context
 	cancel          context.CancelFunc
+	blockCache      *otter.Cache[BlockCacheKey, sstable.SSTBlock]
+	sstIndexCache   *otter.Cache[uint64, sstable.SSTIndex]
+	openSstCache    *otter.Cache[uint64, *sstable.SSTableRead]
+}
+
+type BlockCacheKey struct {
+	sstFileNum  uint64
+	blockOffset uint32
 }
 
 const (
@@ -41,23 +54,59 @@ func InitStorage() (*Storage, error) {
 	default:
 		memtableObj = memtable.NewMemtable(memtable.SKIPLIST)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
 
 	manifest, err := InitManifest()
 	if err != nil {
 		return nil, err
 	}
 
+	openSstCache, err := otter.New(&otter.Options[uint64, *sstable.SSTableRead]{
+		MaximumSize: config.ShunyaConfigs.OpenSstLRUSize,
+		OnDeletion: func(e otter.DeletionEvent[uint64, *sstable.SSTableRead]) {
+			onSstOpenFileCacheEvict(e.Value)
+		},
+	})
+
+	if err != nil {
+		// log error
+	}
+
+	sstIndexCache, err := otter.New(&otter.Options[uint64, sstable.SSTIndex]{
+		MaximumWeight: uint64(config.ShunyaConfigs.SSTIndexCacheSizeByte),
+		Weigher: func(key uint64, value sstable.SSTIndex) uint32 {
+			return value.IndexSize
+		},
+	})
+	if err != nil {
+		// log error
+	}
+
+	blockCache, err := otter.New(&otter.Options[BlockCacheKey, sstable.SSTBlock]{
+		MaximumWeight: uint64(config.ShunyaConfigs.BlockCacheSizeByte),
+		Weigher: func(key BlockCacheKey, value sstable.SSTBlock) uint32 {
+			return value.BlockLen
+		},
+	})
+
+	if err != nil {
+		//log error
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
 	storage := &Storage{
-		mtQ:             []memtable.Memtable{memtableObj},
 		activeMem:       memtableObj,
 		flushQueue:      make(chan memtable.Memtable, config.ShunyaConfigs.FlushQueueSize),
 		idleFlushTicker: time.NewTicker(time.Duration(config.ShunyaConfigs.IdleFlushIntervalMillis) * time.Millisecond),
 		wal:             wal.InitWal(),
 		manifest:        manifest,
+		openSstCache:    openSstCache,
+		blockCache:      blockCache,
+		sstIndexCache:   sstIndexCache,
 		ctx:             ctx,
 		cancel:          cancel,
 	}
+	initialMtQ := []memtable.Memtable{memtableObj}
+	storage.mtQPtr.Store(&initialMtQ)
 
 	storage.StartFlushLoop()
 	go storage.StartIdleFlushWorker(time.Duration(config.ShunyaConfigs.IdleFlushIntervalMillis) * time.Millisecond)
@@ -67,6 +116,42 @@ func InitStorage() (*Storage, error) {
 	}
 
 	return storage, nil
+}
+
+func (storage *Storage) sstBlockLoader(ctx context.Context, blockCacheKey BlockCacheKey) (sstable.SSTBlock, error) {
+	sstableRead, err := storage.openSstCache.Get(ctx, blockCacheKey.sstFileNum,
+		otter.LoaderFunc[uint64, *sstable.SSTableRead](storage.sstReadFileLoader))
+	if err != nil {
+		return sstable.SSTBlock{}, err
+	}
+
+	return sstableRead.LoadBlock(sstableRead.SstFile, blockCacheKey.blockOffset)
+}
+
+func (storage *Storage) sstIndexLoader(ctx context.Context, sstFileNum uint64) (sstable.SSTIndex, error) {
+	sstableRead, err := storage.openSstCache.Get(ctx, sstFileNum,
+		otter.LoaderFunc[uint64, *sstable.SSTableRead](storage.sstReadFileLoader))
+	if err != nil {
+		return sstable.SSTIndex{}, err
+	}
+
+	sstIndex, err := sstableRead.LoadIndex(sstableRead.SstFile)
+	if err != nil {
+		return sstable.SSTIndex{}, err
+	}
+	return sstIndex, nil
+}
+
+func (storage *Storage) sstReadFileLoader(ctx context.Context, sstFileNum uint64) (*sstable.SSTableRead, error) {
+	return sstable.OpenSSTableRead(sstFileNum)
+}
+
+func onSstOpenFileCacheEvict(ssTableRead *sstable.SSTableRead) {
+	if ssTableRead.GetSSTReadRef() == 0 {
+		ssTableRead.CloseSST()
+	} else {
+		// push the file to a queue for closing
+	}
 }
 
 func (storage *Storage) RestoreData() error {
@@ -90,20 +175,24 @@ func (storage *Storage) addMemTable() memtable.Memtable {
 	default:
 		memtableObj = memtable.NewMemtable(memtable.SKIPLIST)
 	}
-	storage.mtQ = append(storage.mtQ, memtableObj)
+	oldMtQ := *storage.mtQPtr.Load()
+	newMtQ := append(slices.Clone(oldMtQ), memtableObj)
+	storage.mtQPtr.Store(&newMtQ)
 	return memtableObj
 }
 
 func (storage *Storage) Get(key []byte, lsn constants.LsnType) []byte {
-	//TODO: check in mutable mem first then check in immutable mem and if not present move to sstables
-	data := storage.activeMem.Get(key, lsn)
-	if data != nil {
+	data, lookupResult := storage.activeMem.Get(key, lsn)
+
+	if lookupResult != constants.KeyNotFound {
 		return data
 	}
-	for i := 0; i < len(storage.mtQ); i++ {
-		if storage.mtQ[i] != storage.activeMem {
-			data = storage.mtQ[i].Get(key, lsn)
-			if data != nil {
+
+	curMtQ := *storage.mtQPtr.Load()
+	for i := len(curMtQ) - 1; i >= 0; i-- {
+		if curMtQ[i] != storage.activeMem {
+			data, lookupResult = curMtQ[i].Get(key, lsn)
+			if lookupResult != constants.KeyNotFound {
 				return data
 			}
 		}
@@ -112,22 +201,61 @@ func (storage *Storage) Get(key []byte, lsn constants.LsnType) []byte {
 	version := storage.manifest.AcquireRef()
 	defer storage.manifest.ReleaseRef(version)
 
-	for _, level := range version.Levels {
-		for _, sstMeta := range level {
-			//TODO: implement the read
-			// implement an open sstable cache (fixed size and build it on startup and use LRU for eviction for now)
-			// also the sstable block cache should also be created to identify all blocks (can be cached on startup for all sst)
-			// from metadata find the sstable to read and identify the block from the cache and then check if sst is opened in sst file cache
-			// if already in cache read the required block and find the key. If sst file is not in cache open the file and use LRU to evict and then read
-			// do this for all levels until you find the key (this is sequential, as soon as you find the key return)
+	for lvl, level := range version.Levels {
+		for i := range level {
+			sstMeta := level[i]
+			if lvl == 0 {
+				sstMeta = level[len(level)-1-i]
+			}
+			if bytes.Compare(key, sstMeta.minKey) < 0 || bytes.Compare(key, sstMeta.maxKey) > 0 || sstMeta.minLsn > lsn {
+				continue
+			}
+
+			value, result, err := storage.getFromSst(sstMeta.sstFileNum, key, lsn)
+			if err != nil {
+				// TODO: surface read errors; skipping this file could return a stale value from an older one
+				return []byte("")
+			}
+			switch result {
+			case constants.KeyFound:
+				return value
+			case constants.KeyDeleted:
+				return []byte("")
+			}
 		}
 	}
 
 	return []byte("")
 }
 
+func (storage *Storage) getFromSst(sstFileNum uint64, key []byte, lsn constants.LsnType) ([]byte, constants.LookupResult, error) {
+	sstIndex, err := storage.sstIndexCache.Get(storage.ctx, sstFileNum,
+		otter.LoaderFunc[uint64, sstable.SSTIndex](storage.sstIndexLoader))
+	if err != nil {
+		return nil, constants.KeyNotFound, err
+	}
+
+	indexEntry, ok := sstIndex.FindBlock(key, lsn)
+	if !ok {
+		return nil, constants.KeyNotFound, nil
+	}
+
+	blockCacheKey := BlockCacheKey{
+		sstFileNum:  sstFileNum,
+		blockOffset: indexEntry.BlockOffset,
+	}
+	sstBlock, err := storage.blockCache.Get(storage.ctx, blockCacheKey,
+		otter.LoaderFunc[BlockCacheKey, sstable.SSTBlock](storage.sstBlockLoader))
+	if err != nil {
+		return nil, constants.KeyNotFound, err
+	}
+
+	value, result := storage.binarySearchInSstBlock(&sstBlock, key, lsn)
+	return value, result, nil
+}
+
 func (storage *Storage) Range(key []byte, limit int, lsnSnapshot constants.LsnType) [][]byte {
-	it := storage.mtQ[0].NewIterator(lsnSnapshot)
+	it := storage.activeMem.NewIterator(lsnSnapshot)
 	res := [][]byte{}
 	it.Seek(key)
 	for it.Valid() && limit > 0 {
@@ -175,4 +303,8 @@ func (storage *Storage) checkMemTableForFreeze() {
 		storage.flushQueue <- memToflush
 		storage.mu.Lock()
 	}
+}
+
+func (storage *Storage) binarySearchInSstBlock(sstBlock *sstable.SSTBlock, key []byte, lsn constants.LsnType) ([]byte, constants.LookupResult) {
+	return sstBlock.Search(key, lsn)
 }

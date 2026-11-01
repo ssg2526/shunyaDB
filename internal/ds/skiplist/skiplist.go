@@ -49,7 +49,7 @@ func shouldMoveToNextLvl(threshold float64) bool {
 	return rand_toss > threshold
 }
 
-func (skipList *Skiplist) Get(key []byte, snapshotLsn constants.LsnType) (value []byte) {
+func (skipList *Skiplist) Get(key []byte, snapshotLsn constants.LsnType) ([]byte, constants.LookupResult) {
 	curr := skipList.head
 
 	for i := skipList.maxLevel - 1; i >= 0; i-- {
@@ -62,15 +62,15 @@ func (skipList *Skiplist) Get(key []byte, snapshotLsn constants.LsnType) (value 
 			for j := len(curr.lvlPtrs[i].versions) - 1; j >= 0; j-- {
 				if curr.lvlPtrs[i].versions[j].lsn <= snapshotLsn {
 					if curr.lvlPtrs[i].versions[j].entryType == constants.DelEntry {
-						return nil
+						return nil, constants.KeyDeleted
 					}
-					return curr.lvlPtrs[i].versions[j].value
+					return curr.lvlPtrs[i].versions[j].value, constants.KeyFound
 				}
 			}
-			return nil
+			return nil, constants.KeyNotFound
 		}
 	}
-	return nil
+	return nil, constants.KeyNotFound
 }
 
 // TODO: need to handle concurrent writes yet - choose either single write or lock free model

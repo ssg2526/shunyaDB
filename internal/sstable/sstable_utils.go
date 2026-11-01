@@ -32,17 +32,17 @@ const (
 
 func MarshalSSTDataBlock(sstableBlock *SSTBlock) []byte {
 	dataSize := 0
-	for _, entry := range sstableBlock.entries {
+	for _, entry := range sstableBlock.Entries {
 		dataSize += KEY_VAL_LEN_SIZE + len(entry.internalKey.key) + LSN_SIZE + ENTRY_TYPE_SIZE + len(entry.value)
 	}
 
-	entryCount := uint32(len(sstableBlock.entries))
+	entryCount := uint32(len(sstableBlock.Entries))
 	totalSize := dataSize + BLOCK_TRAILER_SIZE
 
 	marshalled := make([]byte, totalSize)
 
 	offset := 0
-	for _, entry := range sstableBlock.entries {
+	for _, entry := range sstableBlock.Entries {
 		key := entry.internalKey.key
 		value := entry.value
 
@@ -71,9 +71,9 @@ func MarshalSSTDataBlock(sstableBlock *SSTBlock) []byte {
 	checksum := crc64.Checksum(marshalled[:offset], crc64Table)
 	binary.LittleEndian.PutUint64(marshalled[offset:], checksum)
 
-	sstableBlock.blockLen = uint32(totalSize)
-	sstableBlock.entryCount = entryCount
-	sstableBlock.checksum = checksum
+	sstableBlock.BlockLen = uint32(totalSize)
+	sstableBlock.EntryCount = entryCount
+	sstableBlock.Checksum = checksum
 
 	return marshalled
 }
@@ -118,39 +118,39 @@ func UnMarshalSSTableBlock(sstableBlockBytes []byte) *SSTBlock {
 	}
 
 	return &SSTBlock{
-		blockLen:   uint32(blockLen),
-		entryCount: sstBlockEntryCount,
-		entries:    sstBlockEntries,
-		checksum:   sstBlockChecksum,
+		BlockLen:   uint32(blockLen),
+		EntryCount: sstBlockEntryCount,
+		Entries:    sstBlockEntries,
+		Checksum:   sstBlockChecksum,
 	}
 }
 
 func MarshalSSTIndex(sstIndex *SSTIndex) []byte {
 	dataSize := 0
-	for _, entry := range sstIndex.indexEntries {
-		dataSize += INDEX_BLOCK_LEN_SIZE + INDEX_BLOCK_OFFSET_SIZE + KEY_LEN_SIZE + len(entry.key) + LSN_SIZE
+	for _, entry := range sstIndex.IndexEntries {
+		dataSize += INDEX_BLOCK_LEN_SIZE + INDEX_BLOCK_OFFSET_SIZE + KEY_LEN_SIZE + len(entry.Key) + LSN_SIZE
 	}
 
-	entryCount := uint32(len(sstIndex.indexEntries))
+	entryCount := uint32(len(sstIndex.IndexEntries))
 	totalSize := dataSize + BLOCK_TRAILER_SIZE
 
 	marshalled := make([]byte, totalSize)
 
 	offset := 0
-	for _, entry := range sstIndex.indexEntries {
-		binary.LittleEndian.PutUint32(marshalled[offset:], entry.blockLen)
+	for _, entry := range sstIndex.IndexEntries {
+		binary.LittleEndian.PutUint32(marshalled[offset:], entry.BlockLen)
 		offset += INDEX_BLOCK_LEN_SIZE
 
-		binary.LittleEndian.PutUint32(marshalled[offset:], entry.blockOffset)
+		binary.LittleEndian.PutUint32(marshalled[offset:], entry.BlockOffset)
 		offset += INDEX_BLOCK_OFFSET_SIZE
 
-		binary.LittleEndian.PutUint64(marshalled[offset:], uint64(len(entry.key)))
+		binary.LittleEndian.PutUint64(marshalled[offset:], uint64(len(entry.Key)))
 		offset += KEY_LEN_SIZE
 
-		copy(marshalled[offset:], entry.key)
-		offset += len(entry.key)
+		copy(marshalled[offset:], entry.Key)
+		offset += len(entry.Key)
 
-		binary.LittleEndian.PutUint64(marshalled[offset:], uint64(entry.lsn))
+		binary.LittleEndian.PutUint64(marshalled[offset:], uint64(entry.Lsn))
 		offset += LSN_SIZE
 	}
 
@@ -160,16 +160,16 @@ func MarshalSSTIndex(sstIndex *SSTIndex) []byte {
 	checksum := crc64.Checksum(marshalled[:offset], crc64Table)
 	binary.LittleEndian.PutUint64(marshalled[offset:], checksum)
 
-	sstIndex.indexLen = uint32(totalSize)
-	sstIndex.checksum = checksum
+	sstIndex.IndexSize = uint32(totalSize)
+	sstIndex.Checksum = checksum
 
 	return marshalled
 }
 
 func UnMarshalSSTIndex(sstIndexBytes []byte) *SSTIndex {
-	indexLen := len(sstIndexBytes)
+	indexSize := len(sstIndexBytes)
 
-	trailerStart := indexLen - BLOCK_TRAILER_SIZE
+	trailerStart := indexSize - BLOCK_TRAILER_SIZE
 	entryCount := binary.LittleEndian.Uint32(sstIndexBytes[trailerStart : trailerStart+ENTRY_COUNT_SIZE])
 	checksum := binary.LittleEndian.Uint64(sstIndexBytes[trailerStart+ENTRY_COUNT_SIZE:])
 
@@ -190,19 +190,19 @@ func UnMarshalSSTIndex(sstIndexBytes []byte) *SSTIndex {
 		lsn := binary.LittleEndian.Uint64(sstIndexBytes[lsnStart : lsnStart+LSN_SIZE])
 
 		indexEntries = append(indexEntries, SSTIndexEntry{
-			blockLen:    blockLen,
-			blockOffset: blockOffset,
-			key:         key,
-			lsn:         constants.LsnType(lsn),
+			BlockLen:    blockLen,
+			BlockOffset: blockOffset,
+			Key:         key,
+			Lsn:         constants.LsnType(lsn),
 		})
 
 		offset = lsnStart + LSN_SIZE
 	}
 
 	return &SSTIndex{
-		indexEntries: indexEntries,
-		indexLen:     uint32(indexLen),
-		checksum:     checksum,
+		IndexEntries: indexEntries,
+		IndexSize:    uint32(indexSize),
+		Checksum:     checksum,
 	}
 }
 
@@ -213,7 +213,7 @@ func MarshalSSTFooter(sstFooter *SSTFooter) []byte {
 	binary.LittleEndian.PutUint32(marshalled[offset:offset+FOOTER_INDEX_OFFSET_SIZE], sstFooter.indexOffset)
 	offset += FOOTER_INDEX_OFFSET_SIZE
 
-	binary.LittleEndian.PutUint32(marshalled[offset:offset+FOOTER_INDEX_LEN_SIZE], sstFooter.indexLen)
+	binary.LittleEndian.PutUint32(marshalled[offset:offset+FOOTER_INDEX_LEN_SIZE], sstFooter.indexSize)
 	offset += FOOTER_INDEX_LEN_SIZE
 
 	binary.LittleEndian.PutUint16(marshalled[offset:offset+FOOTER_VERSION_SIZE], sstFooter.version)
@@ -241,7 +241,7 @@ func UnMarshalSSTFooter(sstFooterBytes []byte) *SSTFooter {
 
 	return &SSTFooter{
 		indexOffset: indexOffset,
-		indexLen:    indexLen,
+		indexSize:   indexLen,
 		version:     version,
 		magic:       magic,
 	}
