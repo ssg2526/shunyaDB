@@ -15,4 +15,11 @@ const (
 	KeyDeleted
 )
 
+type IteratorMode uint8
+
+const (
+	Point IteratorMode = iota
+	Range
+)
+
 type LsnType uint64

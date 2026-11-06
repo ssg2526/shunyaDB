@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/maypok86/otter/v2"
 	"github.com/ssg2526/shunya/config"
 	constants "github.com/ssg2526/shunya/internal/constants"
 	"github.com/ssg2526/shunya/internal/memtable"
@@ -25,16 +24,9 @@ type Storage struct {
 	idleFlushTicker *time.Ticker
 	wal             *wal.WAL
 	manifest        *Manifest
+	cacheManager    *sstable.CacheManager
 	ctx             context.Context
 	cancel          context.CancelFunc
-	blockCache      *otter.Cache[BlockCacheKey, sstable.SSTBlock]
-	sstIndexCache   *otter.Cache[uint64, sstable.SSTIndex]
-	openSstCache    *otter.Cache[uint64, *sstable.SSTableRead]
-}
-
-type BlockCacheKey struct {
-	sstFileNum  uint64
-	blockOffset uint32
 }
 
 const (
@@ -60,38 +52,6 @@ func InitStorage() (*Storage, error) {
 		return nil, err
 	}
 
-	openSstCache, err := otter.New(&otter.Options[uint64, *sstable.SSTableRead]{
-		MaximumSize: config.ShunyaConfigs.OpenSstLRUSize,
-		OnDeletion: func(e otter.DeletionEvent[uint64, *sstable.SSTableRead]) {
-			onSstOpenFileCacheEvict(e.Value)
-		},
-	})
-
-	if err != nil {
-		// log error
-	}
-
-	sstIndexCache, err := otter.New(&otter.Options[uint64, sstable.SSTIndex]{
-		MaximumWeight: uint64(config.ShunyaConfigs.SSTIndexCacheSizeByte),
-		Weigher: func(key uint64, value sstable.SSTIndex) uint32 {
-			return value.IndexSize
-		},
-	})
-	if err != nil {
-		// log error
-	}
-
-	blockCache, err := otter.New(&otter.Options[BlockCacheKey, sstable.SSTBlock]{
-		MaximumWeight: uint64(config.ShunyaConfigs.BlockCacheSizeByte),
-		Weigher: func(key BlockCacheKey, value sstable.SSTBlock) uint32 {
-			return value.BlockLen
-		},
-	})
-
-	if err != nil {
-		//log error
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	storage := &Storage{
 		activeMem:       memtableObj,
@@ -99,9 +59,7 @@ func InitStorage() (*Storage, error) {
 		idleFlushTicker: time.NewTicker(time.Duration(config.ShunyaConfigs.IdleFlushIntervalMillis) * time.Millisecond),
 		wal:             wal.InitWal(),
 		manifest:        manifest,
-		openSstCache:    openSstCache,
-		blockCache:      blockCache,
-		sstIndexCache:   sstIndexCache,
+		cacheManager:    sstable.InitCacheManager(),
 		ctx:             ctx,
 		cancel:          cancel,
 	}
@@ -116,42 +74,6 @@ func InitStorage() (*Storage, error) {
 	}
 
 	return storage, nil
-}
-
-func (storage *Storage) sstBlockLoader(ctx context.Context, blockCacheKey BlockCacheKey) (sstable.SSTBlock, error) {
-	sstableRead, err := storage.openSstCache.Get(ctx, blockCacheKey.sstFileNum,
-		otter.LoaderFunc[uint64, *sstable.SSTableRead](storage.sstReadFileLoader))
-	if err != nil {
-		return sstable.SSTBlock{}, err
-	}
-
-	return sstableRead.LoadBlock(sstableRead.SstFile, blockCacheKey.blockOffset)
-}
-
-func (storage *Storage) sstIndexLoader(ctx context.Context, sstFileNum uint64) (sstable.SSTIndex, error) {
-	sstableRead, err := storage.openSstCache.Get(ctx, sstFileNum,
-		otter.LoaderFunc[uint64, *sstable.SSTableRead](storage.sstReadFileLoader))
-	if err != nil {
-		return sstable.SSTIndex{}, err
-	}
-
-	sstIndex, err := sstableRead.LoadIndex(sstableRead.SstFile)
-	if err != nil {
-		return sstable.SSTIndex{}, err
-	}
-	return sstIndex, nil
-}
-
-func (storage *Storage) sstReadFileLoader(ctx context.Context, sstFileNum uint64) (*sstable.SSTableRead, error) {
-	return sstable.OpenSSTableRead(sstFileNum)
-}
-
-func onSstOpenFileCacheEvict(ssTableRead *sstable.SSTableRead) {
-	if ssTableRead.GetSSTReadRef() == 0 {
-		ssTableRead.CloseSST()
-	} else {
-		// push the file to a queue for closing
-	}
 }
 
 func (storage *Storage) RestoreData() error {
@@ -211,53 +133,24 @@ func (storage *Storage) Get(key []byte, lsn constants.LsnType) []byte {
 				continue
 			}
 
-			value, result, err := storage.getFromSst(sstMeta.sstFileNum, key, lsn)
-			if err != nil {
-				// TODO: surface read errors; skipping this file could return a stale value from an older one
-				return []byte("")
-			}
-			switch result {
-			case constants.KeyFound:
-				return value
-			case constants.KeyDeleted:
-				return []byte("")
+			sstIterator := sstable.NewIterator(storage.ctx, sstMeta.sstFileNum, lsn, storage.cacheManager)
+			defer sstIterator.Close()
+
+			sstIterator.Seek(key)
+
+			if sstIterator.Valid() {
+				return sstIterator.Value()
 			}
 		}
 	}
 
-	return []byte("")
+	return nil
 }
 
-func (storage *Storage) getFromSst(sstFileNum uint64, key []byte, lsn constants.LsnType) ([]byte, constants.LookupResult, error) {
-	sstIndex, err := storage.sstIndexCache.Get(storage.ctx, sstFileNum,
-		otter.LoaderFunc[uint64, sstable.SSTIndex](storage.sstIndexLoader))
-	if err != nil {
-		return nil, constants.KeyNotFound, err
-	}
-
-	indexEntry, ok := sstIndex.FindBlock(key, lsn)
-	if !ok {
-		return nil, constants.KeyNotFound, nil
-	}
-
-	blockCacheKey := BlockCacheKey{
-		sstFileNum:  sstFileNum,
-		blockOffset: indexEntry.BlockOffset,
-	}
-	sstBlock, err := storage.blockCache.Get(storage.ctx, blockCacheKey,
-		otter.LoaderFunc[BlockCacheKey, sstable.SSTBlock](storage.sstBlockLoader))
-	if err != nil {
-		return nil, constants.KeyNotFound, err
-	}
-
-	value, result := storage.binarySearchInSstBlock(&sstBlock, key, lsn)
-	return value, result, nil
-}
-
-func (storage *Storage) Range(key []byte, limit int, lsnSnapshot constants.LsnType) [][]byte {
+func (storage *Storage) Range(startkey []byte, endKey []byte, limit int, lsnSnapshot constants.LsnType) [][]byte {
 	it := storage.activeMem.NewIterator(lsnSnapshot)
 	res := [][]byte{}
-	it.Seek(key)
+	it.Seek(startkey)
 	for it.Valid() && limit > 0 {
 		key := it.Key()
 		val := it.Value()
@@ -303,8 +196,4 @@ func (storage *Storage) checkMemTableForFreeze() {
 		storage.flushQueue <- memToflush
 		storage.mu.Lock()
 	}
-}
-
-func (storage *Storage) binarySearchInSstBlock(sstBlock *sstable.SSTBlock, key []byte, lsn constants.LsnType) ([]byte, constants.LookupResult) {
-	return sstBlock.Search(key, lsn)
 }

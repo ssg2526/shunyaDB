@@ -7,12 +7,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc64"
 	"math"
 	"os"
 	"path"
 	"sort"
 	"sync/atomic"
 
+	"github.com/maypok86/otter/v2"
 	"github.com/ssg2526/shunya/config"
 	constants "github.com/ssg2526/shunya/internal/constants"
 	"github.com/ssg2526/shunya/internal/memtable"
@@ -32,9 +34,12 @@ type SSTable struct {
 }
 
 type SSTableRead struct {
-	SstFile    *os.File
-	SstFileNum uint64
-	RefCounter atomic.Int32
+	SstFile       *os.File
+	SstFileNum    uint64
+	RefCounter    atomic.Int32
+	blockCache    *otter.Cache[BlockCacheKey, SSTBlock]
+	sstIndexCache *otter.Cache[uint64, SSTIndex]
+	openSstCache  *otter.Cache[uint64, *SSTableRead]
 }
 
 type SSTBlock struct {
@@ -100,12 +105,16 @@ func OpenSSTableRead(fileNum uint64) (*SSTableRead, error) {
 	sstFile, err := os.OpenFile(path.Join(config.ShunyaConfigs.DataDir, fmt.Sprintf("%016d", fileNum)+".sst"), os.O_RDONLY, 0444)
 	if err != nil {
 		fmt.Println("open new sstable file err", err)
+		return &SSTableRead{}, err
 	}
 
-	return &SSTableRead{
+	sstableRead := &SSTableRead{
 		SstFile:    sstFile,
 		SstFileNum: fileNum,
-	}, nil
+	}
+	sstableRead.RefCounter.Store(1)
+
+	return sstableRead, nil
 }
 
 func (sstable *SSTable) CloseSSTable(fileNum uint64) {
@@ -207,46 +216,94 @@ func compareInternalKey(key []byte, lsn constants.LsnType, targetKey []byte, tar
 	return cmp.Compare(lsn, targetLsn)
 }
 
-func (sstIndex *SSTIndex) FindBlock(key []byte, snapshotLsn constants.LsnType) (SSTIndexEntry, bool) {
+func (sstIndex *SSTIndex) FindBlock(key []byte, snapshotLsn constants.LsnType) (int32, bool) {
 	entries := sstIndex.IndexEntries
 	i := sort.Search(len(entries), func(i int) bool {
 		return compareInternalKey(entries[i].Key, entries[i].Lsn, key, snapshotLsn) > 0
 	})
+
 	if i == 0 {
-		return SSTIndexEntry{}, false
+		return -1, false
 	}
-	return entries[i-1], true
+
+	return int32(i - 1), true
 }
 
-func (sstBlock *SSTBlock) Search(key []byte, snapshotLsn constants.LsnType) ([]byte, constants.LookupResult) {
+func (sstIndex *SSTIndex) FindRangeStartBlock(startKey []byte, snapshotLsn constants.LsnType) (int32, bool) {
+	entries := sstIndex.IndexEntries
+	i := sort.Search(len(entries), func(i int) bool {
+		return compareInternalKey(entries[i].Key, entries[i].Lsn, startKey, snapshotLsn) > 0
+	})
+
+	if i == 0 {
+		return 0, true
+	}
+
+	return int32(i - 1), true
+}
+
+func (sstBlock *SSTBlock) Search(key []byte, snapshotLsn constants.LsnType) (int32, bool) {
 	entries := sstBlock.Entries
 
 	i := sort.Search(len(entries), func(i int) bool {
 		internalKey := entries[i].internalKey
 		return compareInternalKey(internalKey.key, internalKey.lsn, key, snapshotLsn) > 0
 	})
-	if i == 0 {
-		return nil, constants.KeyNotFound
+
+	if i > 0 {
+		candidateEntry := entries[i-1].internalKey
+
+		if bytes.Equal(candidateEntry.key, key) {
+			return int32(i - 1), true
+		}
 	}
 
-	entry := entries[i-1]
-	if !bytes.Equal(entry.internalKey.key, key) {
-		return nil, constants.KeyNotFound
-	}
-	if entry.internalKey.entryType == constants.DelEntry {
-		return nil, constants.KeyDeleted
-	}
-	return entry.value, constants.KeyFound
+	return -1, false
 }
 
-func (sstableRead *SSTableRead) LoadBlock(sstFile *os.File, blockOffset uint32) (SSTBlock, error) {
-	return SSTBlock{}, nil
+func (sstBlock *SSTBlock) SearchForRange(key []byte, snapshotLsn constants.LsnType) (int32, bool) {
+	entries := sstBlock.Entries
+
+	i := sort.Search(len(entries), func(i int) bool {
+		internalKey := entries[i].internalKey
+		return compareInternalKey(internalKey.key, internalKey.lsn, key, snapshotLsn) > 0
+	})
+
+	if i > 0 {
+		candidateEntry := entries[i-1].internalKey
+
+		if bytes.Equal(candidateEntry.key, key) {
+			return int32(i - 1), true
+		}
+	}
+
+	return -1, false
 }
 
-func (sstableRead *SSTableRead) LoadIndex(sstFile *os.File) (SSTIndex, error) {
+func (sstableRead *SSTableRead) LoadBlock(sstFile *os.File, blockOffset uint32, blockLen uint32) (*SSTBlock, error) {
+	if blockLen < BLOCK_TRAILER_SIZE {
+		return nil, fmt.Errorf("sst %d: block at offset %d is too small (%d bytes)", sstableRead.SstFileNum, blockOffset, blockLen)
+	}
+
+	blockBytes := make([]byte, blockLen)
+	if _, err := sstFile.ReadAt(blockBytes, int64(blockOffset)); err != nil {
+		return nil, err
+	}
+
+	checksumStart := blockLen - CHECKSUM_SIZE
+	storedChecksum := binary.LittleEndian.Uint64(blockBytes[checksumStart:])
+	if crc64.Checksum(blockBytes[:checksumStart], crc64Table) != storedChecksum {
+		return nil, fmt.Errorf("sst %d: block at offset %d checksum mismatch", sstableRead.SstFileNum, blockOffset)
+	}
+
+	return UnMarshalSSTableBlock(blockBytes), nil
+}
+
+func (sstableRead *SSTableRead) LoadIndex(sstFile *os.File) (*SSTIndex, error) {
 	sstFooter, err := sstableRead.readFooter(sstFile)
 	if err != nil {
 		//log
+		return nil, err
 	}
 	return sstableRead.readIndex(sstFile, &sstFooter)
 }
@@ -283,29 +340,42 @@ func (sstableRead *SSTableRead) readFooter(sstFile *os.File) (SSTFooter, error) 
 	}, nil
 }
 
-func (sstableRead *SSTableRead) readIndex(sstFile *os.File, sstFooter *SSTFooter) (SSTIndex, error) {
+func (sstableRead *SSTableRead) readIndex(sstFile *os.File, sstFooter *SSTFooter) (*SSTIndex, error) {
 	indexBytes := make([]byte, sstFooter.indexSize)
 	if _, err := sstFile.ReadAt(indexBytes, int64(sstFooter.indexOffset)); err != nil {
 		//log
-		return SSTIndex{}, err
+		return nil, err
 	}
 	sstIndex := UnMarshalSSTIndex(indexBytes)
 
-	return *sstIndex, nil
+	return sstIndex, nil
 }
 
-func (sstableRead *SSTableRead) RegisterSSTReader() {
-	sstableRead.RefCounter.Add(1)
+func (sstableRead *SSTableRead) TryAcquire() bool {
+	for {
+		curRefCounter := sstableRead.RefCounter.Load()
+		if curRefCounter <= 0 {
+			return false
+		}
+		if sstableRead.RefCounter.CompareAndSwap(curRefCounter, curRefCounter+1) {
+			return true
+		}
+	}
 }
 
-func (sstableRead *SSTableRead) ReleaseSSTReader() {
-	sstableRead.RefCounter.Add(-1)
+func (sstableRead *SSTableRead) Release() {
+	if sstableRead.RefCounter.Add(-1) == 0 {
+		sstableRead.CloseSST()
+	}
 }
 
-func (sstableRead *SSTableRead) GetSSTReadRef() int32 {
-	return sstableRead.RefCounter.Load()
+func onSstOpenFileCacheEvict(ssTableRead *SSTableRead) {
+	ssTableRead.Release()
 }
 
-func (sstableRead *SSTableRead) CloseSST() error {
-	return sstableRead.SstFile.Close()
+func (sstableRead *SSTableRead) CloseSST() {
+	err := sstableRead.SstFile.Close()
+	if err != nil {
+		fmt.Println("error closing sst file for sstableRead: " + sstableRead.SstFile.Name())
+	}
 }
