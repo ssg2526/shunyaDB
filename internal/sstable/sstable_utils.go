@@ -33,7 +33,7 @@ const (
 func MarshalSSTDataBlock(sstableBlock *SSTBlock) []byte {
 	dataSize := 0
 	for _, entry := range sstableBlock.Entries {
-		dataSize += KEY_VAL_LEN_SIZE + len(entry.internalKey.key) + LSN_SIZE + ENTRY_TYPE_SIZE + len(entry.value)
+		dataSize += KEY_VAL_LEN_SIZE + len(entry.internalKey.Key) + LSN_SIZE + ENTRY_TYPE_SIZE + len(entry.value)
 	}
 
 	entryCount := uint32(len(sstableBlock.Entries))
@@ -43,7 +43,7 @@ func MarshalSSTDataBlock(sstableBlock *SSTBlock) []byte {
 
 	offset := 0
 	for _, entry := range sstableBlock.Entries {
-		key := entry.internalKey.key
+		key := entry.internalKey.Key
 		value := entry.value
 
 		binary.LittleEndian.PutUint64(marshalled[offset:], uint64(len(key)))
@@ -55,10 +55,10 @@ func MarshalSSTDataBlock(sstableBlock *SSTBlock) []byte {
 		copy(marshalled[offset:], key)
 		offset += len(key)
 
-		binary.LittleEndian.PutUint64(marshalled[offset:], uint64(entry.internalKey.lsn))
+		binary.LittleEndian.PutUint64(marshalled[offset:], uint64(entry.internalKey.Lsn))
 		offset += LSN_SIZE
 
-		marshalled[offset] = byte(entry.internalKey.entryType)
+		marshalled[offset] = byte(entry.internalKey.EntryType)
 		offset += ENTRY_TYPE_SIZE
 
 		copy(marshalled[offset:], value)
@@ -106,10 +106,10 @@ func UnMarshalSSTableBlock(sstableBlockBytes []byte) *SSTBlock {
 		value := sstableBlockBytes[valStart : valStart+valLen]
 
 		sstBlockEntries = append(sstBlockEntries, SSTBlockEntry{
-			internalKey: SSTableInternalKey{
-				key:       key,
-				lsn:       constants.LsnType(lsn),
-				entryType: constants.EntryType(entryType),
+			internalKey: constants.InternalKey{
+				Key:       key,
+				Lsn:       constants.LsnType(lsn),
+				EntryType: constants.EntryType(entryType),
 			},
 			value: value,
 		})

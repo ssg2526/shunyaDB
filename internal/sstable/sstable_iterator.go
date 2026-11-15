@@ -6,6 +6,7 @@ import (
 
 	"github.com/maypok86/otter/v2"
 	constants "github.com/ssg2526/shunya/internal/constants"
+	"github.com/ssg2526/shunya/internal/iterator"
 )
 
 type SSTableIterator struct {
@@ -13,7 +14,6 @@ type SSTableIterator struct {
 	sstRead       *SSTableRead
 	mode          constants.IteratorMode
 	cacheManager  *CacheManager
-	lsnSnapshot   constants.LsnType
 	sstIndex      *SSTIndex
 	sstBlock      *SSTBlock
 	indexEntryPos int32
@@ -22,10 +22,9 @@ type SSTableIterator struct {
 	ctx           context.Context
 }
 
-func NewIterator(ctx context.Context, sstFileNum uint64, lsnSnapshot constants.LsnType, cacheManager *CacheManager) *SSTableIterator {
+func NewIterator(ctx context.Context, sstFileNum uint64, cacheManager *CacheManager) iterator.Iterator {
 	sstableIterator := &SSTableIterator{
 		sstFileNum:   sstFileNum,
-		lsnSnapshot:  lsnSnapshot,
 		cacheManager: cacheManager,
 		ctx:          ctx,
 	}
@@ -37,20 +36,20 @@ func (it *SSTableIterator) Valid() bool {
 	return it.valid
 }
 
-func (it *SSTableIterator) Seek(key []byte) {
+func (it *SSTableIterator) SeekGE(key []byte, lsn constants.LsnType) {
 	it.valid = false
 	if it.sstIndex == nil {
 		it.loadSstableIndex()
 	}
 
 	if it.mode == constants.Point {
-		indexEntryPos, ok := it.sstIndex.FindBlock(key, it.lsnSnapshot)
+		indexEntryPos, ok := it.sstIndex.FindBlock(key, lsn)
 		if !ok {
 			return
 		}
 		it.indexEntryPos = indexEntryPos
 	} else if it.mode == constants.Range {
-		indexEntryPos, ok := it.sstIndex.FindRangeStartBlock(key, it.lsnSnapshot)
+		indexEntryPos, ok := it.sstIndex.FindRangeStartBlock(key, lsn)
 		if !ok {
 			return
 		}
@@ -71,7 +70,7 @@ func (it *SSTableIterator) Seek(key []byte) {
 		return
 	}
 
-	blockPos, ok := sstBlock.Search(key, it.lsnSnapshot)
+	blockPos, ok := sstBlock.Search(key, lsn)
 	if ok == false {
 		return
 	}
@@ -84,8 +83,12 @@ func (it *SSTableIterator) Next() {
 
 }
 
-func (it *SSTableIterator) Key() []byte {
-	return it.sstBlock.Entries[it.blockEntryPos].internalKey.key
+func (it *SSTableIterator) First() {
+
+}
+
+func (it *SSTableIterator) Key() constants.InternalKey {
+	return it.sstBlock.Entries[it.blockEntryPos].internalKey
 }
 
 func (it *SSTableIterator) Value() []byte {
@@ -93,11 +96,21 @@ func (it *SSTableIterator) Value() []byte {
 		return nil
 	}
 	blockEntry := it.sstBlock.Entries[it.blockEntryPos]
-	if blockEntry.internalKey.entryType == constants.DelEntry {
-		return []byte("")
-	}
+	// if blockEntry.internalKey.EntryType == constants.DelEntry {
+	// 	return []byte("")
+	// }
 	return blockEntry.value
 }
+
+// func (it *SSTableIterator) IsVisible() bool {
+// 	if !it.Valid() ||
+// 		it.sstBlock.Entries[it.blockEntryPos].internalKey.EntryType == constants.DelEntry ||
+// 		it.sstBlock.Entries[it.blockEntryPos].internalKey.Lsn < it.lsnSnapshot {
+// 		return false
+// 	}
+
+// 	return true
+// }
 
 func (it *SSTableIterator) Close() {
 	if it.sstRead != nil {

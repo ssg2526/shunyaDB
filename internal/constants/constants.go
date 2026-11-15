@@ -1,4 +1,4 @@
-package contsants
+package constants
 
 type EntryType uint8
 

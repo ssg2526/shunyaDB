@@ -7,28 +7,27 @@ import (
 	"github.com/ssg2526/shunya/internal/iterator"
 )
 
-type SnapshotIterator struct {
-	head        *Node // to be checked if this is needed later
-	node        *Node
-	lsnSnapshot constants.LsnType
+type SkipListIterator struct {
+	head       *Node // to be checked if this is needed later
+	node       *Node
+	versionIdx int
 }
 
-func (skiplist *Skiplist) NewSnapshotIterator(lsnSnapshot constants.LsnType) iterator.Iterator {
-	return &SnapshotIterator{
-		head:        skiplist.head,
-		node:        skiplist.head,
-		lsnSnapshot: lsnSnapshot,
+func (skiplist *Skiplist) NewSkipListIterator() iterator.Iterator {
+	return &SkipListIterator{
+		head: skiplist.head,
+		node: skiplist.head,
 	}
 }
 
-func (it *SnapshotIterator) Valid() bool {
+func (it *SkipListIterator) Valid() bool {
 	if it == nil || it.node == nil {
 		return false
 	}
 	return true
 }
 
-func (it *SnapshotIterator) Seek(key []byte) {
+func (it *SkipListIterator) SeekGE(key []byte, lsn constants.LsnType) {
 	n := it.head
 
 	for i := len(n.lvlPtrs) - 1; i >= 0; i-- {
@@ -37,46 +36,61 @@ func (it *SnapshotIterator) Seek(key []byte) {
 		}
 	}
 	it.node = n.lvlPtrs[0]
-	it.skipInvisibleNodes()
+	it.versionIdx = 0
 }
 
-func (it *SnapshotIterator) Next() {
+func (it *SkipListIterator) Next() {
 	if it.Valid() {
-		it.node = it.node.lvlPtrs[0]
-		it.skipInvisibleNodes()
+		if len(it.node.versions) > it.versionIdx {
+			it.versionIdx++
+		} else {
+			it.node = it.node.lvlPtrs[0]
+		}
 	}
 }
 
-func (it *SnapshotIterator) Key() []byte {
-	if it.Valid() {
-		return it.node.key
-	}
-	return nil
+func (it *SkipListIterator) First() {
+
 }
 
-func (it *SnapshotIterator) Value() []byte {
+func (it *SkipListIterator) Key() constants.InternalKey {
+	if it.Valid() {
+		return constants.InternalKey{
+			Key:       it.node.key,
+			Lsn:       it.node.versions[it.versionIdx].lsn,
+			EntryType: it.node.versions[it.versionIdx].entryType,
+		}
+	}
+	return constants.InternalKey{}
+}
+
+func (it *SkipListIterator) Value() []byte {
 	if !it.Valid() {
 		return nil
 	}
-	for i := len(it.node.versions) - 1; i >= 0; i-- {
-		if it.lsnSnapshot >= it.node.versions[i].lsn {
-			return it.node.versions[i].value
-		}
-	}
-	return nil //not throwing error may need to return error if some case appears
+
+	return it.node.versions[it.versionIdx].value
+	// for i := len(it.node.versions) - 1; i >= 0; i-- {
+	// 	if it.lsnSnapshot >= it.node.versions[i].lsn {
+	// 		return it.node.versions[i].value
+	// 	}
+	// }
+	// return nil //not throwing error may need to return error if some case appears
 }
 
-func (it *SnapshotIterator) isVisible(node *Node) bool {
-	for i := len(node.versions) - 1; i >= 0; i-- {
-		if it.lsnSnapshot >= node.versions[i].lsn {
-			return node.versions[i].entryType != constants.DelEntry
-		}
-	}
-	return false
+// func (it *SkipListIterator) IsVisible() bool {
+// 	if it.lsnSnapshot >= it.node.versions[it.versionIdx].lsn {
+// 		return it.node.versions[it.versionIdx].entryType != constants.DelEntry
+// 	}
+// 	return false
+// }
+
+func (it *SkipListIterator) Close() {
+
 }
 
-func (it *SnapshotIterator) skipInvisibleNodes() {
-	for it.Valid() && !it.isVisible(it.node) {
-		it.node = it.node.lvlPtrs[0]
-	}
-}
+// func (it *SkipListIterator) skipInvisibleNodes() {
+// 	for it.Valid() && !it.IsVisible() {
+// 		it.node = it.node.lvlPtrs[0]
+// 	}
+// }

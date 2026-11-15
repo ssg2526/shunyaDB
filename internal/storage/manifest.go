@@ -389,6 +389,7 @@ func getCurrentManifestNumFromCurrent(manifestDir string) (uint64, error) {
 }
 
 func (manifest *Manifest) AcquireRef() *Version {
+	//todo: fix atomicity
 	version := manifest.currentVersion
 	version.refCounter.Add(1)
 	return version

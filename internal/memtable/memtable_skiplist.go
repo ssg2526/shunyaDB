@@ -30,13 +30,13 @@ func (memSkiplist *MemSkiplist) Put(key []byte, value []byte, lsn constants.LsnT
 	return nil
 }
 
-func (memSkiplist *MemSkiplist) NewIterator(lsnSnapshot constants.LsnType) iterator.Iterator {
-	return memSkiplist.skiplist.NewSnapshotIterator(lsnSnapshot)
+func (memSkiplist *MemSkiplist) NewRawIterator() iterator.Iterator {
+	return memSkiplist.skiplist.NewSkipListIterator()
 }
 
-func (memSkiplist *MemSkiplist) NewVersionedIterator() iterator.VersionedIterator {
-	return memSkiplist.skiplist.NewFlushIterator()
-}
+// func (memSkiplist *MemSkiplist) NewVersionedIterator() iterator.VersionedIterator {
+// 	return memSkiplist.skiplist.NewFlushIterator()
+// }
 
 func (memSkiplist *MemSkiplist) RegisterReader(lsn constants.LsnType) {
 	memSkiplist.baseMemtable.RegisterReader(lsn)

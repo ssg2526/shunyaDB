@@ -3,7 +3,6 @@ package storage
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/ssg2526/shunya/config"
 	constants "github.com/ssg2526/shunya/internal/constants"
+	"github.com/ssg2526/shunya/internal/iterator"
 	"github.com/ssg2526/shunya/internal/memtable"
 	"github.com/ssg2526/shunya/internal/sstable"
 	"github.com/ssg2526/shunya/internal/wal"
@@ -113,7 +113,7 @@ func (storage *Storage) Get(key []byte, lsn constants.LsnType) []byte {
 	curMtQ := *storage.mtQPtr.Load()
 	for i := len(curMtQ) - 1; i >= 0; i-- {
 		if curMtQ[i] != storage.activeMem {
-			data, lookupResult = curMtQ[i].Get(key, lsn)
+			data, lookupResult = curMtQ[i].Get(key, lsn) //TODO: USE iterators and refactor this
 			if lookupResult != constants.KeyNotFound {
 				return data
 			}
@@ -133,10 +133,10 @@ func (storage *Storage) Get(key []byte, lsn constants.LsnType) []byte {
 				continue
 			}
 
-			sstIterator := sstable.NewIterator(storage.ctx, sstMeta.sstFileNum, lsn, storage.cacheManager)
+			sstIterator := sstable.NewIterator(storage.ctx, sstMeta.sstFileNum, storage.cacheManager)
 			defer sstIterator.Close()
 
-			sstIterator.Seek(key)
+			sstIterator.SeekGE(key, lsn)
 
 			if sstIterator.Valid() {
 				return sstIterator.Value()
@@ -147,25 +147,41 @@ func (storage *Storage) Get(key []byte, lsn constants.LsnType) []byte {
 	return nil
 }
 
-func (storage *Storage) Range(startkey []byte, endKey []byte, limit int, lsnSnapshot constants.LsnType) [][]byte {
-	it := storage.activeMem.NewIterator(lsnSnapshot)
-	res := [][]byte{}
-	it.Seek(startkey)
-	for it.Valid() && limit > 0 {
-		key := it.Key()
-		val := it.Value()
-		keyLen := len(key)
-		valLen := len(val)
-		kvBuf := make([]byte, len(key)+len(val)+8)
-		binary.LittleEndian.PutUint32(kvBuf, uint32(keyLen))
-		binary.LittleEndian.PutUint32(kvBuf, uint32(valLen))
-		copy(kvBuf[8:], key)
-		copy(kvBuf[8+keyLen:], val)
-		res = append(res, kvBuf)
-		it.Next()
-		limit--
+func (storage *Storage) Range(startKey []byte, endKey []byte, limit int, lsnSnapshot constants.LsnType) [][]byte {
+	manifestVersion := storage.manifest.AcquireRef()
+	iteratorArraySize := 1
+	for _, level := range manifestVersion.Levels {
+		if len(level) > 0 {
+			iteratorArraySize += len(level)
+		}
 	}
-	return res
+
+	iteratorArray := make([]iterator.Iterator, iteratorArraySize)
+	it := storage.activeMem.NewRawIterator()
+	iteratorArray[0] = it
+
+	var wg sync.WaitGroup
+
+	for _, level := range manifestVersion.Levels {
+		wg.Go(func() {
+			storage.buildIteratorForKey(level, startKey, lsnSnapshot, iteratorArray)
+		})
+	}
+
+	wg.Wait()
+
+	vIt := iterator.NewVisibleIterator(iterator.NewMergeIterator(iteratorArray), lsnSnapshot)
+
+	values := make([][]byte, 0, 100)
+	vIt.First()
+
+	for vIt.Valid() && len(values) <= min(limit, 100) {
+		values = append(values, vIt.Value())
+		vIt.Next()
+	}
+	// TODO: build continuation token as well
+
+	return values
 }
 
 // TODO: need to implememt soft throttling and hard throttling
@@ -196,4 +212,8 @@ func (storage *Storage) checkMemTableForFreeze() {
 		storage.flushQueue <- memToflush
 		storage.mu.Lock()
 	}
+}
+
+func (storage *Storage) buildIteratorForKey(level []SSTableMeta, key []byte, lsn constants.LsnType, iterArr []iterator.Iterator) {
+
 }

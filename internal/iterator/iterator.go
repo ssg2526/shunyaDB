@@ -2,15 +2,17 @@
 package iterator
 
 import (
-	constants "github.com/ssg2526/shunya/internal/constants"
+	"github.com/ssg2526/shunya/internal/constants"
 )
 
 type Iterator interface {
-	Seek(key []byte)
+	SeekGE(key []byte, lsn constants.LsnType)
 	Next()
+	First()
 	Valid() bool
-	Key() []byte
+	Key() constants.InternalKey
 	Value() []byte
+	Close()
 }
 
 type Version struct {
@@ -19,9 +21,9 @@ type Version struct {
 	EntryType constants.EntryType
 }
 
-type VersionedIterator interface {
-	Valid() bool
-	Next()
-	Key() []byte
-	Versions() []Version
-}
+// type VersionedIterator interface {
+// 	Valid() bool
+// 	Next()
+// 	Key() []byte
+// 	Versions() []Version
+// }

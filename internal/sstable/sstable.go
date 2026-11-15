@@ -50,14 +50,8 @@ type SSTBlock struct {
 }
 
 type SSTBlockEntry struct {
-	internalKey SSTableInternalKey
+	internalKey constants.InternalKey
 	value       []byte
-}
-
-type SSTableInternalKey struct {
-	key       []byte
-	lsn       constants.LsnType
-	entryType constants.EntryType
 }
 
 type SSTFooter struct {
@@ -125,47 +119,45 @@ func (sstable *SSTable) Flush(memtable memtable.Memtable) FlushResult {
 
 	blockEntries := make([]SSTBlockEntry, 0)
 	indexEntries := make([]SSTIndexEntry, 0)
-	it := memtable.NewVersionedIterator()
+	it := memtable.NewRawIterator()
 	blockSize := 0
 	minLsn := constants.LsnType(math.MaxInt64)
 	maxLsn := constants.LsnType(0)
 	maxKey := []byte(nil)
 	offset := uint32(0)
 	for it.Valid() {
-		versions := it.Versions()
-		for _, version := range versions {
 
-			minLsn = min(version.Lsn, minLsn)
-			maxLsn = max(version.Lsn, maxLsn)
+		minLsn = min(it.Key().Lsn, minLsn)
+		maxLsn = max(it.Key().Lsn, maxLsn)
 
-			sstBlockEntry := SSTBlockEntry{
-				internalKey: SSTableInternalKey{key: it.Key(), lsn: version.Lsn, entryType: version.EntryType},
-				value:       version.Value,
-			}
-			blockEntries = append(blockEntries, sstBlockEntry)
-			blockSize += KEY_VAL_LEN_SIZE + len(it.Key()) + LSN_SIZE + ENTRY_TYPE_SIZE + len(version.Value)
-			if blockSize >= SSTABLE_BLOCK_SIZE_BYTES {
-				sstBlock := &SSTBlock{
-					EntryCount: uint32(len(blockEntries)),
-					Entries:    blockEntries,
-				}
-				marshalledData := MarshalSSTDataBlock(sstBlock)
-				sstable.bufWriter.Write(marshalledData)
-
-				indexEntry := SSTIndexEntry{
-					BlockLen:    sstBlock.BlockLen,
-					BlockOffset: offset,
-					Key:         sstBlock.Entries[0].internalKey.key,
-					Lsn:         sstBlock.Entries[0].internalKey.lsn,
-				}
-				offset += sstBlock.BlockLen
-				indexEntries = append(indexEntries, indexEntry)
-
-				blockSize = 0
-				blockEntries = make([]SSTBlockEntry, 0)
-			}
-			maxKey = it.Key()
+		sstBlockEntry := SSTBlockEntry{
+			internalKey: it.Key(),
+			value:       it.Value(),
 		}
+		blockEntries = append(blockEntries, sstBlockEntry)
+		blockSize += KEY_VAL_LEN_SIZE + len(it.Key().Key) + LSN_SIZE + ENTRY_TYPE_SIZE + len(it.Value())
+		if blockSize >= SSTABLE_BLOCK_SIZE_BYTES {
+			sstBlock := &SSTBlock{
+				EntryCount: uint32(len(blockEntries)),
+				Entries:    blockEntries,
+			}
+			marshalledData := MarshalSSTDataBlock(sstBlock)
+			sstable.bufWriter.Write(marshalledData)
+
+			indexEntry := SSTIndexEntry{
+				BlockLen:    sstBlock.BlockLen,
+				BlockOffset: offset,
+				Key:         sstBlock.Entries[0].internalKey.Key,
+				Lsn:         sstBlock.Entries[0].internalKey.Lsn,
+			}
+			offset += sstBlock.BlockLen
+			indexEntries = append(indexEntries, indexEntry)
+
+			blockSize = 0
+			blockEntries = make([]SSTBlockEntry, 0)
+		}
+		maxKey = it.Key().Key
+
 		it.Next()
 	}
 	if blockSize > 0 {
@@ -179,8 +171,8 @@ func (sstable *SSTable) Flush(memtable memtable.Memtable) FlushResult {
 		indexEntry := SSTIndexEntry{
 			BlockLen:    sstBlock.BlockLen,
 			BlockOffset: offset,
-			Key:         sstBlock.Entries[0].internalKey.key,
-			Lsn:         sstBlock.Entries[0].internalKey.lsn,
+			Key:         sstBlock.Entries[0].internalKey.Key,
+			Lsn:         sstBlock.Entries[0].internalKey.Lsn,
 		}
 		offset += sstBlock.BlockLen
 		indexEntries = append(indexEntries, indexEntry)
@@ -247,13 +239,13 @@ func (sstBlock *SSTBlock) Search(key []byte, snapshotLsn constants.LsnType) (int
 
 	i := sort.Search(len(entries), func(i int) bool {
 		internalKey := entries[i].internalKey
-		return compareInternalKey(internalKey.key, internalKey.lsn, key, snapshotLsn) > 0
+		return compareInternalKey(internalKey.Key, internalKey.Lsn, key, snapshotLsn) > 0
 	})
 
 	if i > 0 {
 		candidateEntry := entries[i-1].internalKey
 
-		if bytes.Equal(candidateEntry.key, key) {
+		if bytes.Equal(candidateEntry.Key, key) {
 			return int32(i - 1), true
 		}
 	}
@@ -266,13 +258,13 @@ func (sstBlock *SSTBlock) SearchForRange(key []byte, snapshotLsn constants.LsnTy
 
 	i := sort.Search(len(entries), func(i int) bool {
 		internalKey := entries[i].internalKey
-		return compareInternalKey(internalKey.key, internalKey.lsn, key, snapshotLsn) > 0
+		return compareInternalKey(internalKey.Key, internalKey.Lsn, key, snapshotLsn) > 0
 	})
 
 	if i > 0 {
 		candidateEntry := entries[i-1].internalKey
 
-		if bytes.Equal(candidateEntry.key, key) {
+		if bytes.Equal(candidateEntry.Key, key) {
 			return int32(i - 1), true
 		}
 	}
