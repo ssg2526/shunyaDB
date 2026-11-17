@@ -160,22 +160,19 @@ func (storage *Storage) Range(startKey []byte, endKey []byte, limit int, lsnSnap
 	it := storage.activeMem.NewRawIterator()
 	iteratorArray[0] = it
 
-	var wg sync.WaitGroup
-
 	for _, level := range manifestVersion.Levels {
-		wg.Go(func() {
-			storage.buildIteratorForKey(level, startKey, lsnSnapshot, iteratorArray)
-		})
+		storage.buildIteratorForKey(level, startKey, lsnSnapshot, iteratorArray)
 	}
-
-	wg.Wait()
 
 	vIt := iterator.NewVisibleIterator(iterator.NewMergeIterator(iteratorArray), lsnSnapshot)
 
 	values := make([][]byte, 0, 100)
-	vIt.First()
+	vIt.SeekGE(startKey)
 
 	for vIt.Valid() && len(values) <= min(limit, 100) {
+		if endKey != nil && bytes.Compare(vIt.Key().Key, endKey) >= 0 {
+			return values
+		}
 		values = append(values, vIt.Value())
 		vIt.Next()
 	}

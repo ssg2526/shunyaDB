@@ -145,6 +145,9 @@ func (it *SSTableIterator) First() {
 }
 
 func (it *SSTableIterator) Key() constants.InternalKey {
+	if !it.Valid() {
+		return constants.InternalKey{}
+	}
 	return it.sstBlock.Entries[it.blockEntryPos].internalKey
 }
 

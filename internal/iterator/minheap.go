@@ -34,30 +34,21 @@ func (itmh *MinHeap) GetMin() Iterator {
 }
 
 func NewMinHeapFromArray(iteratorArray []Iterator) *MinHeap {
-	itmh := MinHeap{
-		Size:    len(iteratorArray),
-		minheap: iteratorArray,
+	h := MinHeap{
+		minheap: make([]Iterator, 0, len(iteratorArray)),
 	}
 
-	i := 0
-	j := itmh.Size - 1
-
-	for i < j {
-		for i <= j && (itmh.minheap[j] == nil || !itmh.minheap[j].Valid()) {
-			j--
+	for _, it := range iteratorArray {
+		if it != nil && it.Valid() {
+			h.minheap = append(h.minheap, it)
 		}
-		if itmh.minheap[i] == nil || !itmh.minheap[i].Valid() {
-			itmh.swap(i, j)
-		}
-		i++
 	}
+	h.Size = len(h.minheap)
 
-	itmh.Size = j + 1
-
-	for i := itmh.Size - 2; i >= 0; i-- {
-		itmh.heapify(i)
+	for i := h.Size/2 - 1; i >= 0; i-- {
+		h.heapify(i)
 	}
-	return &itmh
+	return &h
 }
 
 func (itmh *MinHeap) heapify(i int) {
