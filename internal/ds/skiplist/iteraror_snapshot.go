@@ -15,8 +15,9 @@ type SkipListIterator struct {
 
 func (skiplist *Skiplist) NewSkipListIterator() iterator.Iterator {
 	return &SkipListIterator{
-		head: skiplist.head,
-		node: skiplist.head,
+		head:       skiplist.head,
+		node:       skiplist.head,
+		versionIdx: -1,
 	}
 }
 
@@ -35,22 +36,47 @@ func (it *SkipListIterator) SeekGE(key []byte, lsn constants.LsnType) {
 			n = n.lvlPtrs[i]
 		}
 	}
+
 	it.node = n.lvlPtrs[0]
-	it.versionIdx = 0
+	if it.node == nil {
+		return
+	}
+
+	if bytes.Equal(it.node.key, key) && it.node.versions[0].lsn <= lsn {
+		for i := len(it.node.versions) - 1; i >= 0; i-- {
+			if it.node.versions[i].lsn <= lsn {
+				it.versionIdx = i
+				return
+			}
+		}
+		it.node = n.lvlPtrs[0]
+		if it.node == nil {
+			return
+		}
+	}
+
+	it.versionIdx = len(it.node.versions) - 1
 }
 
 func (it *SkipListIterator) Next() {
 	if it.Valid() {
-		if len(it.node.versions) > it.versionIdx {
-			it.versionIdx++
-		} else {
-			it.node = it.node.lvlPtrs[0]
+		if it.versionIdx > 0 {
+			it.versionIdx--
+			return
+		}
+
+		it.node = it.node.lvlPtrs[0]
+		if it.node != nil {
+			it.versionIdx = len(it.node.versions) - 1
 		}
 	}
 }
 
 func (it *SkipListIterator) First() {
-
+	it.node = it.head.lvlPtrs[0]
+	if it.node != nil {
+		it.versionIdx = len(it.node.versions) - 1
+	}
 }
 
 func (it *SkipListIterator) Key() constants.InternalKey {
@@ -70,27 +96,10 @@ func (it *SkipListIterator) Value() []byte {
 	}
 
 	return it.node.versions[it.versionIdx].value
-	// for i := len(it.node.versions) - 1; i >= 0; i-- {
-	// 	if it.lsnSnapshot >= it.node.versions[i].lsn {
-	// 		return it.node.versions[i].value
-	// 	}
-	// }
-	// return nil //not throwing error may need to return error if some case appears
 }
-
-// func (it *SkipListIterator) IsVisible() bool {
-// 	if it.lsnSnapshot >= it.node.versions[it.versionIdx].lsn {
-// 		return it.node.versions[it.versionIdx].entryType != constants.DelEntry
-// 	}
-// 	return false
-// }
 
 func (it *SkipListIterator) Close() {
-
+	it.node = nil
+	it.head = nil
+	it.versionIdx = -1
 }
-
-// func (it *SkipListIterator) skipInvisibleNodes() {
-// 	for it.Valid() && !it.IsVisible() {
-// 		it.node = it.node.lvlPtrs[0]
-// 	}
-// }

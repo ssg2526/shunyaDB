@@ -205,7 +205,7 @@ func compareInternalKey(key []byte, lsn constants.LsnType, targetKey []byte, tar
 	if c := bytes.Compare(key, targetKey); c != 0 {
 		return c
 	}
-	return cmp.Compare(lsn, targetLsn)
+	return cmp.Compare(targetLsn, lsn)
 }
 
 func (sstIndex *SSTIndex) FindBlock(key []byte, snapshotLsn constants.LsnType) (int32, bool) {
@@ -215,7 +215,10 @@ func (sstIndex *SSTIndex) FindBlock(key []byte, snapshotLsn constants.LsnType) (
 	})
 
 	if i == 0 {
-		return -1, false
+		if !bytes.Equal(entries[0].Key, key) {
+			return -1, false
+		}
+		return 0, true
 	}
 
 	return int32(i - 1), true
@@ -243,10 +246,10 @@ func (sstBlock *SSTBlock) Search(key []byte, snapshotLsn constants.LsnType) (int
 	})
 
 	if i > 0 {
-		candidateEntry := entries[i-1].internalKey
+		candidateEntry := entries[i].internalKey
 
 		if bytes.Equal(candidateEntry.Key, key) {
-			return int32(i - 1), true
+			return int32(i), true
 		}
 	}
 

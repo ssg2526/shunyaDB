@@ -71,7 +71,7 @@ func (it *SSTableIterator) SeekGE(key []byte, lsn constants.LsnType) {
 	}
 
 	blockPos, ok := sstBlock.Search(key, lsn)
-	if ok == false {
+	if !ok {
 		return
 	}
 	it.blockEntryPos = blockPos
@@ -80,11 +80,68 @@ func (it *SSTableIterator) SeekGE(key []byte, lsn constants.LsnType) {
 }
 
 func (it *SSTableIterator) Next() {
+	if !it.Valid() {
+		return
+	}
+	it.valid = false
 
+	if it.blockEntryPos < int32(len(it.sstBlock.Entries)-1) {
+		it.blockEntryPos += 1
+		it.valid = true
+		return
+	}
+
+	if it.indexEntryPos >= int32(len(it.sstIndex.IndexEntries))-1 && it.blockEntryPos >= int32(len(it.sstBlock.Entries)-1) {
+
+		return
+	}
+
+	it.indexEntryPos += 1
+
+	blockCacheKey := BlockCacheKey{
+		sstFileNum:  it.sstFileNum,
+		blockOffset: it.sstIndex.IndexEntries[it.indexEntryPos].BlockOffset,
+		blockLen:    it.sstIndex.IndexEntries[it.indexEntryPos].BlockLen,
+	}
+
+	sstBlock, err := it.cacheManager.BlockCache.Get(it.ctx, blockCacheKey,
+		otter.LoaderFunc[BlockCacheKey, *SSTBlock](it.sstBlockLoader))
+
+	if err != nil {
+		// log error
+		return
+	}
+
+	it.blockEntryPos = 0
+	it.sstBlock = sstBlock
+	it.valid = true
 }
 
 func (it *SSTableIterator) First() {
+	it.valid = false
+	if it.sstIndex == nil {
+		it.loadSstableIndex()
+	}
 
+	it.indexEntryPos = 0
+
+	blockCacheKey := BlockCacheKey{
+		sstFileNum:  it.sstFileNum,
+		blockOffset: it.sstIndex.IndexEntries[it.indexEntryPos].BlockOffset,
+		blockLen:    it.sstIndex.IndexEntries[it.indexEntryPos].BlockLen,
+	}
+
+	sstBlock, err := it.cacheManager.BlockCache.Get(it.ctx, blockCacheKey,
+		otter.LoaderFunc[BlockCacheKey, *SSTBlock](it.sstBlockLoader))
+
+	if err != nil {
+		// log error
+		return
+	}
+
+	it.blockEntryPos = 0
+	it.sstBlock = sstBlock
+	it.valid = true
 }
 
 func (it *SSTableIterator) Key() constants.InternalKey {
@@ -96,21 +153,8 @@ func (it *SSTableIterator) Value() []byte {
 		return nil
 	}
 	blockEntry := it.sstBlock.Entries[it.blockEntryPos]
-	// if blockEntry.internalKey.EntryType == constants.DelEntry {
-	// 	return []byte("")
-	// }
 	return blockEntry.value
 }
-
-// func (it *SSTableIterator) IsVisible() bool {
-// 	if !it.Valid() ||
-// 		it.sstBlock.Entries[it.blockEntryPos].internalKey.EntryType == constants.DelEntry ||
-// 		it.sstBlock.Entries[it.blockEntryPos].internalKey.Lsn < it.lsnSnapshot {
-// 		return false
-// 	}
-
-// 	return true
-// }
 
 func (it *SSTableIterator) Close() {
 	if it.sstRead != nil {
