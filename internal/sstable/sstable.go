@@ -120,6 +120,7 @@ func (sstable *SSTable) Flush(memtable memtable.Memtable) FlushResult {
 	blockEntries := make([]SSTBlockEntry, 0)
 	indexEntries := make([]SSTIndexEntry, 0)
 	it := memtable.NewRawIterator()
+	it.First()
 	blockSize := 0
 	minLsn := constants.LsnType(math.MaxInt64)
 	maxLsn := constants.LsnType(0)
@@ -242,10 +243,10 @@ func (sstBlock *SSTBlock) Search(key []byte, snapshotLsn constants.LsnType) (int
 
 	i := sort.Search(len(entries), func(i int) bool {
 		internalKey := entries[i].internalKey
-		return compareInternalKey(internalKey.Key, internalKey.Lsn, key, snapshotLsn) > 0
+		return compareInternalKey(internalKey.Key, internalKey.Lsn, key, snapshotLsn) >= 0
 	})
 
-	if i > 0 {
+	if i < len(entries) {
 		candidateEntry := entries[i].internalKey
 
 		if bytes.Equal(candidateEntry.Key, key) {
@@ -317,11 +318,11 @@ func (sstableRead *SSTableRead) readFooter(sstFile *os.File) (SSTFooter, error) 
 	footerByterOffset := 0
 	indexOffset := binary.LittleEndian.Uint32(footerBytes[footerByterOffset:FOOTER_INDEX_OFFSET_SIZE])
 	footerByterOffset += FOOTER_INDEX_OFFSET_SIZE
-	indexLen := binary.LittleEndian.Uint32(footerBytes[footerByterOffset:FOOTER_INDEX_LEN_SIZE])
+	indexLen := binary.LittleEndian.Uint32(footerBytes[footerByterOffset : footerByterOffset+FOOTER_INDEX_LEN_SIZE])
 	footerByterOffset += FOOTER_INDEX_LEN_SIZE
-	version := binary.LittleEndian.Uint16(footerBytes[footerByterOffset:FOOTER_VERSION_SIZE])
+	version := binary.LittleEndian.Uint16(footerBytes[footerByterOffset : footerByterOffset+FOOTER_VERSION_SIZE])
 	footerByterOffset += FOOTER_VERSION_SIZE
-	magic := footerBytes[footerByterOffset:FOOTER_MAGIC_SIZE]
+	magic := footerBytes[footerByterOffset : footerByterOffset+FOOTER_MAGIC_SIZE]
 
 	if len(magic) != 8 { //add magic num check as well
 		return SSTFooter{}, errors.New("magic number mismatch file corrupted")

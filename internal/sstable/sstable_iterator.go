@@ -56,24 +56,26 @@ func (it *SSTableIterator) SeekGE(key []byte, lsn constants.LsnType) {
 		it.indexEntryPos = indexEntryPos
 	}
 
-	blockCacheKey := BlockCacheKey{
-		sstFileNum:  it.sstFileNum,
-		blockOffset: it.sstIndex.IndexEntries[it.indexEntryPos].BlockOffset,
-		blockLen:    it.sstIndex.IndexEntries[it.indexEntryPos].BlockLen,
-	}
-
-	sstBlock, err := it.cacheManager.BlockCache.Get(it.ctx, blockCacheKey,
-		otter.LoaderFunc[BlockCacheKey, *SSTBlock](it.sstBlockLoader))
-
+	sstBlock, err := it.loadBlockAt(it.indexEntryPos)
 	if err != nil {
 		// log error
 		return
 	}
 
 	blockPos, ok := sstBlock.Search(key, lsn)
+	if !ok && it.indexEntryPos+1 < int32(len(it.sstIndex.IndexEntries)) {
+		it.indexEntryPos += 1
+		sstBlock, err = it.loadBlockAt(it.indexEntryPos)
+		if err != nil {
+			return
+		}
+		blockPos, ok = sstBlock.Search(key, lsn)
+	}
+
 	if !ok {
 		return
 	}
+
 	it.blockEntryPos = blockPos
 	it.sstBlock = sstBlock
 	it.valid = true
@@ -98,15 +100,7 @@ func (it *SSTableIterator) Next() {
 
 	it.indexEntryPos += 1
 
-	blockCacheKey := BlockCacheKey{
-		sstFileNum:  it.sstFileNum,
-		blockOffset: it.sstIndex.IndexEntries[it.indexEntryPos].BlockOffset,
-		blockLen:    it.sstIndex.IndexEntries[it.indexEntryPos].BlockLen,
-	}
-
-	sstBlock, err := it.cacheManager.BlockCache.Get(it.ctx, blockCacheKey,
-		otter.LoaderFunc[BlockCacheKey, *SSTBlock](it.sstBlockLoader))
-
+	sstBlock, err := it.loadBlockAt(it.indexEntryPos)
 	if err != nil {
 		// log error
 		return
@@ -125,15 +119,7 @@ func (it *SSTableIterator) First() {
 
 	it.indexEntryPos = 0
 
-	blockCacheKey := BlockCacheKey{
-		sstFileNum:  it.sstFileNum,
-		blockOffset: it.sstIndex.IndexEntries[it.indexEntryPos].BlockOffset,
-		blockLen:    it.sstIndex.IndexEntries[it.indexEntryPos].BlockLen,
-	}
-
-	sstBlock, err := it.cacheManager.BlockCache.Get(it.ctx, blockCacheKey,
-		otter.LoaderFunc[BlockCacheKey, *SSTBlock](it.sstBlockLoader))
-
+	sstBlock, err := it.loadBlockAt(it.indexEntryPos)
 	if err != nil {
 		// log error
 		return
@@ -142,6 +128,19 @@ func (it *SSTableIterator) First() {
 	it.blockEntryPos = 0
 	it.sstBlock = sstBlock
 	it.valid = true
+}
+
+// loads the data block pointed to by the given index entry, via the block cache
+func (it *SSTableIterator) loadBlockAt(indexEntryPos int32) (*SSTBlock, error) {
+	indexEntry := it.sstIndex.IndexEntries[indexEntryPos]
+	blockCacheKey := BlockCacheKey{
+		sstFileNum:  it.sstFileNum,
+		blockOffset: indexEntry.BlockOffset,
+		blockLen:    indexEntry.BlockLen,
+	}
+
+	return it.cacheManager.BlockCache.Get(it.ctx, blockCacheKey,
+		otter.LoaderFunc[BlockCacheKey, *SSTBlock](it.sstBlockLoader))
 }
 
 func (it *SSTableIterator) Key() constants.InternalKey {

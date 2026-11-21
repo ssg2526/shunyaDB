@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"sync/atomic"
 
 	constants "github.com/ssg2526/shunya/internal/constants"
@@ -35,6 +36,7 @@ const (
 var manifestCrc64Table = crc64.MakeTable(crc64.ISO)
 
 type Manifest struct {
+	versionMu      sync.Mutex
 	manifestFile   *os.File
 	bufWriter      *bufio.Writer
 	fileNum        uint64
@@ -252,8 +254,11 @@ func (manifest *Manifest) AppendToManifest(manifestEntry *ManifestEntry) error {
 		staleSstFileList: staleFiles,
 		Prev:             manifest.currentVersion,
 	}
+
+	manifest.versionMu.Lock()
 	manifest.currentVersion.Next = newVersion
 	manifest.currentVersion = newVersion
+	manifest.versionMu.Unlock()
 
 	return nil
 }
@@ -389,9 +394,10 @@ func getCurrentManifestNumFromCurrent(manifestDir string) (uint64, error) {
 }
 
 func (manifest *Manifest) AcquireRef() *Version {
-	//todo: fix atomicity
+	manifest.versionMu.Lock()
 	version := manifest.currentVersion
 	version.refCounter.Add(1)
+	manifest.versionMu.Unlock()
 	return version
 }
 

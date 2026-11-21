@@ -30,7 +30,7 @@ type Storage struct {
 }
 
 const (
-	MEM_TABLE_FLUSH_SIZE = 417792
+	MEM_TABLE_FLUSH_SIZE = 417792 //67108864 //
 )
 
 func (storage *Storage) AppendToWal(commandData []byte) constants.LsnType {
@@ -113,7 +113,7 @@ func (storage *Storage) Get(key []byte, lsn constants.LsnType) []byte {
 	curMtQ := *storage.mtQPtr.Load()
 	for i := len(curMtQ) - 1; i >= 0; i-- {
 		if curMtQ[i] != storage.activeMem {
-			data, lookupResult = curMtQ[i].Get(key, lsn) //TODO: USE iterators and refactor this
+			data, lookupResult = curMtQ[i].Get(key, lsn)
 			if lookupResult != constants.KeyNotFound {
 				return data
 			}
@@ -139,6 +139,9 @@ func (storage *Storage) Get(key []byte, lsn constants.LsnType) []byte {
 			sstIterator.SeekGE(key, lsn)
 
 			if sstIterator.Valid() {
+				if sstIterator.Key().EntryType == constants.DelEntry {
+					return nil
+				}
 				return sstIterator.Value()
 			}
 		}

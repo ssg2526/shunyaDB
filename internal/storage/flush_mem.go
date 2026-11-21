@@ -14,6 +14,7 @@ import (
 func (storage *Storage) StartFlushLoop() {
 	go func() {
 		for memTable := range storage.flushQueue {
+			fmt.Printf("Flushing mem\n")
 			storage.FlushMemTable(memTable)
 		}
 	}()
