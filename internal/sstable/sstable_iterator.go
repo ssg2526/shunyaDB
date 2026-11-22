@@ -22,11 +22,12 @@ type SSTableIterator struct {
 	ctx           context.Context
 }
 
-func NewIterator(ctx context.Context, sstFileNum uint64, cacheManager *CacheManager) iterator.Iterator {
+func NewIterator(ctx context.Context, sstFileNum uint64, cacheManager *CacheManager, mode constants.IteratorMode) iterator.Iterator {
 	sstableIterator := &SSTableIterator{
 		sstFileNum:   sstFileNum,
 		cacheManager: cacheManager,
 		ctx:          ctx,
+		mode:         mode,
 	}
 
 	return sstableIterator

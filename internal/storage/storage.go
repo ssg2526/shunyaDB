@@ -133,7 +133,7 @@ func (storage *Storage) Get(key []byte, lsn constants.LsnType) []byte {
 				continue
 			}
 
-			sstIterator := sstable.NewIterator(storage.ctx, sstMeta.sstFileNum, storage.cacheManager)
+			sstIterator := sstable.NewIterator(storage.ctx, sstMeta.sstFileNum, storage.cacheManager, constants.Point)
 			defer sstIterator.Close()
 
 			sstIterator.SeekGE(key, lsn)
@@ -150,38 +150,56 @@ func (storage *Storage) Get(key []byte, lsn constants.LsnType) []byte {
 	return nil
 }
 
-func (storage *Storage) Range(startKey []byte, endKey []byte, limit int, lsnSnapshot constants.LsnType) [][]byte {
+func (storage *Storage) Range(startKey []byte, endKey []byte, limit int, lsnSnapshot constants.LsnType) constants.RangeResponse {
 	manifestVersion := storage.manifest.AcquireRef()
-	iteratorArraySize := 1
+	defer storage.manifest.ReleaseRef(manifestVersion)
+	iteratorArraySize := 0
 	for _, level := range manifestVersion.Levels {
 		if len(level) > 0 {
 			iteratorArraySize += len(level)
 		}
 	}
 
-	iteratorArray := make([]iterator.Iterator, iteratorArraySize)
-	it := storage.activeMem.NewRawIterator()
-	iteratorArray[0] = it
+	curMtQ := *storage.mtQPtr.Load()
+	iteratorArray := make([]iterator.Iterator, 0, len(curMtQ)+iteratorArraySize)
+
+	for i := len(curMtQ) - 1; i >= 0; i-- {
+		iteratorArray = append(iteratorArray, curMtQ[i].NewRawIterator())
+	}
 
 	for _, level := range manifestVersion.Levels {
-		storage.buildIteratorForKey(level, startKey, lsnSnapshot, iteratorArray)
+		iteratorArray = storage.buildIteratorForKey(level, startKey, lsnSnapshot, iteratorArray)
 	}
 
 	vIt := iterator.NewVisibleIterator(iterator.NewMergeIterator(iteratorArray), lsnSnapshot)
 
-	values := make([][]byte, 0, 100)
+	rangeData := make([]constants.RangeData, 0, 100)
 	vIt.SeekGE(startKey)
 
-	for vIt.Valid() && len(values) <= min(limit, 100) {
+	isValid := vIt.Valid()
+	for isValid && len(rangeData) < min(limit, 100) {
 		if endKey != nil && bytes.Compare(vIt.Key().Key, endKey) >= 0 {
-			return values
+			return constants.RangeResponse{
+				Data:              rangeData,
+				ContinuationToken: nil,
+			}
 		}
-		values = append(values, vIt.Value())
+		rangeData = append(rangeData, constants.RangeData{Key: vIt.Key().Key, Value: vIt.Value()})
 		vIt.Next()
+		isValid = vIt.Valid()
 	}
-	// TODO: build continuation token as well
 
-	return values
+	if !isValid {
+		return constants.RangeResponse{
+			Data:              rangeData,
+			ContinuationToken: nil,
+		}
+	}
+
+	return constants.RangeResponse{
+		Data:              rangeData,
+		ContinuationToken: &constants.ContinuationToken{Key: vIt.Key().Key},
+	}
 }
 
 // TODO: need to implememt soft throttling and hard throttling
@@ -214,6 +232,12 @@ func (storage *Storage) checkMemTableForFreeze() {
 	}
 }
 
-func (storage *Storage) buildIteratorForKey(level []SSTableMeta, key []byte, lsn constants.LsnType, iterArr []iterator.Iterator) {
-
+func (storage *Storage) buildIteratorForKey(level []SSTableMeta, key []byte, lsn constants.LsnType, iterArr []iterator.Iterator) []iterator.Iterator {
+	//TODO: fix this, wrong impementation
+	for _, sstMeta := range level {
+		if bytes.Compare(key, sstMeta.minKey) < 0 && bytes.Compare(key, sstMeta.maxKey) >= 0 && lsn >= sstMeta.minLsn && lsn < sstMeta.maxLsn {
+			iterArr = append(iterArr, sstable.NewIterator(storage.ctx, sstMeta.sstFileNum, storage.cacheManager, constants.Range))
+		}
+	}
+	return iterArr
 }
