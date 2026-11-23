@@ -34,9 +34,9 @@ func scanAll(t *testing.T, s *Storage, start, end []byte, limit int, lsn constan
 		if len(resp.Data) > limit {
 			t.Fatalf("page has %d items, limit %d", len(resp.Data), limit)
 		}
-		if len(resp.Data) < 2 {
-			fmt.Printf("data smaller than expected: %d, %d\n", len(resp.Data), limit)
-		}
+		// if len(resp.Data) < 1 {
+		// 	fmt.Printf("data smaller than expected: %d, %d\n", len(resp.Data), limit)
+		// }
 		if pages > 10_000 {
 			fmt.Printf("len, key, val: %d, %s, %s, %s, %s\n", len(resp.Data), resp.Data[0].Key, resp.Data[0].Value, resp.Data[len(resp.Data)-1].Key, resp.Data[len(resp.Data)-1].Value)
 			t.Fatalf("pagination did not terminate")

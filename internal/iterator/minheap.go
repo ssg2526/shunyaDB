@@ -1,7 +1,7 @@
 package iterator
 
 import (
-	"bytes"
+	"github.com/ssg2526/shunya/internal/constants"
 )
 
 type MinHeap struct {
@@ -59,15 +59,13 @@ func (itmh *MinHeap) heapify(i int) {
 	right := itmh.right(i)
 
 	if left < itmh.Size {
-		comp := bytes.Compare(itmh.minheap[left].Key().Key, itmh.minheap[i].Key().Key)
-		if comp < 1 || (comp == 0 && itmh.minheap[left].Key().Lsn > itmh.minheap[i].Key().Lsn) {
+		if constants.CompareInternalKey(itmh.minheap[left].Key(), itmh.minheap[i].Key()) < 0 {
 			itmh.swap(i, left)
 			itmh.heapify(left)
 		}
 	}
 	if right < itmh.Size {
-		comp := bytes.Compare(itmh.minheap[right].Key().Key, itmh.minheap[i].Key().Key)
-		if comp < 1 || (comp == 0 && itmh.minheap[right].Key().Lsn > itmh.minheap[i].Key().Lsn) {
+		if constants.CompareInternalKey(itmh.minheap[right].Key(), itmh.minheap[i].Key()) < 0 {
 			itmh.swap(i, right)
 			itmh.heapify(right)
 		}

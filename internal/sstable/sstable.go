@@ -262,18 +262,10 @@ func (sstBlock *SSTBlock) SearchForRange(key []byte, snapshotLsn constants.LsnTy
 
 	i := sort.Search(len(entries), func(i int) bool {
 		internalKey := entries[i].internalKey
-		return compareInternalKey(internalKey.Key, internalKey.Lsn, key, snapshotLsn) > 0
+		return compareInternalKey(internalKey.Key, internalKey.Lsn, key, snapshotLsn) >= 0
 	})
 
-	if i > 0 {
-		candidateEntry := entries[i-1].internalKey
-
-		if bytes.Equal(candidateEntry.Key, key) {
-			return int32(i - 1), true
-		}
-	}
-
-	return -1, false
+	return int32(i), i < len(entries)
 }
 
 func (sstableRead *SSTableRead) LoadBlock(sstFile *os.File, blockOffset uint32, blockLen uint32) (*SSTBlock, error) {

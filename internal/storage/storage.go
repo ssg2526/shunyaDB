@@ -168,7 +168,7 @@ func (storage *Storage) Range(startKey []byte, endKey []byte, limit int, lsnSnap
 	}
 
 	for _, level := range manifestVersion.Levels {
-		iteratorArray = storage.buildIteratorForKey(level, startKey, lsnSnapshot, iteratorArray)
+		iteratorArray = storage.buildIteratorForKey(level, startKey, endKey, lsnSnapshot, iteratorArray)
 	}
 
 	vIt := iterator.NewVisibleIterator(iterator.NewMergeIterator(iteratorArray), lsnSnapshot)
@@ -232,12 +232,19 @@ func (storage *Storage) checkMemTableForFreeze() {
 	}
 }
 
-func (storage *Storage) buildIteratorForKey(level []SSTableMeta, key []byte, lsn constants.LsnType, iterArr []iterator.Iterator) []iterator.Iterator {
-	//TODO: fix this, wrong impementation
+func (storage *Storage) buildIteratorForKey(level []SSTableMeta, startKey []byte, endKey []byte, lsn constants.LsnType, iterArr []iterator.Iterator) []iterator.Iterator {
 	for _, sstMeta := range level {
-		if bytes.Compare(key, sstMeta.minKey) < 0 && bytes.Compare(key, sstMeta.maxKey) >= 0 && lsn >= sstMeta.minLsn && lsn < sstMeta.maxLsn {
-			iterArr = append(iterArr, sstable.NewIterator(storage.ctx, sstMeta.sstFileNum, storage.cacheManager, constants.Range))
+		if bytes.Compare(startKey, sstMeta.maxKey) > 0 {
+			continue
 		}
+		if endKey != nil && bytes.Compare(endKey, sstMeta.minKey) < 0 {
+			continue
+		}
+		if lsn < sstMeta.minLsn {
+			continue
+		}
+
+		iterArr = append(iterArr, sstable.NewIterator(storage.ctx, sstMeta.sstFileNum, storage.cacheManager, constants.Range))
 	}
 	return iterArr
 }

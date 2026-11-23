@@ -63,6 +63,22 @@ func (it *SSTableIterator) SeekGE(key []byte, lsn constants.LsnType) {
 		return
 	}
 
+	if it.mode == constants.Range {
+		blockPos, ok := sstBlock.SearchForRange(key, lsn)
+		if !ok && it.indexEntryPos+1 < int32(len(it.sstIndex.IndexEntries)) {
+			it.indexEntryPos += 1
+			if sstBlock, err = it.loadBlockAt(it.indexEntryPos); err != nil {
+				return
+			}
+			blockPos = 0
+		}
+
+		it.blockEntryPos = blockPos
+		it.sstBlock = sstBlock
+		it.valid = true
+		return
+	}
+
 	blockPos, ok := sstBlock.Search(key, lsn)
 	if !ok && it.indexEntryPos+1 < int32(len(it.sstIndex.IndexEntries)) {
 		it.indexEntryPos += 1
